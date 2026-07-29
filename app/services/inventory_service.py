@@ -12,6 +12,8 @@ class InventoryService:
         
     def add_product(self, chat_id: int, name: str, unit: str, gst_slab_percent: float, cost_price: float, mrp: float, hsn_code: Optional[str] = None) -> str:
         name = name.lower().strip()
+        if mrp is not None and cost_price is not None and mrp < cost_price:
+            return f"Cannot add product: MRP (₹{mrp}) is below cost price (₹{cost_price})."
         if self.repo.get_by_name(chat_id, name):
             return f"Product '{name}' already exists."
             
@@ -32,6 +34,12 @@ class InventoryService:
         product = self.repo.get_by_name(chat_id, name)
         if not product:
             return f"Product '{name}' not found. Please add it first."
+
+        # Check sell-below-cost: use new values where provided, fall back to existing
+        effective_cost = cost_price if cost_price is not None else product.cost_price
+        effective_mrp = mrp if mrp is not None else product.mrp
+        if effective_mrp < effective_cost:
+            return f"Cannot update: resulting MRP (₹{effective_mrp}) would be below cost price (₹{effective_cost})."
             
         product.stock_quantity += quantity
         if cost_price is not None:
