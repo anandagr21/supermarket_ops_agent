@@ -50,59 +50,66 @@ class StoreAgentOrchestrator:
 
         import os
         import httpx
-        
-        # Create a custom httpx client to avoid DeepSeek hanging issues
-        # (disables brotli and keep-alive)
+
         http_client = httpx.Client(
             http2=False,
             headers={"Connection": "close", "Accept-Encoding": "gzip, deflate"},
             timeout=60.0
         )
 
-        # Model (using deepseek)
-        model = ChatOpenAI(
-            model="deepseek-v4-flash",
-            temperature=0,
-            api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url="https://api.deepseek.com/v1",
-            http_client=http_client
-        )
+        def _make_model(max_tokens: int | None = None):
+            return ChatOpenAI(
+                model="deepseek-v4-flash",
+                temperature=0,
+                max_tokens=max_tokens,
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                base_url="https://api.deepseek.com/v1",
+                http_client=http_client,
+            )
+
+        # Orchestrator gets low max_tokens — it just routes, no long replies
+        routing_model = _make_model(max_tokens=256)
+        # Subagents get full reasoning capacity
+        reasoning_model = _make_model()
+        # Validator only needs JSON, not prose
+        validator_model = _make_model(max_tokens=64)
 
         # SubAgents
         inventory_agent = {
             "name": "inventory_agent",
             "description": "Manage stock, add products, or check inventory levels.",
-            "system_prompt": "You are the Inventory Manager. Help the owner check stock, add products, and receive shipments. Prices are in INR. Be brief. If the user asks to add a product but misses required details (unit, gst, cost price, mrp), DO NOT guess them. Ask the user for the missing fields.",
+            "system_prompt": "You are the Inventory Manager. Execute tool calls immediately. NEVER confirm or recap — just act. Only ask questions if a required field (unit, gst, cost, mrp) was not provided at all.",
             "tools": inventory_tools,
-            "model": model,
+            "model": reasoning_model,
         }
 
         billing_agent = {
             "name": "billing_agent",
-            "description": "Create bills, add items to a bill, or finalize a sale.",
-            "system_prompt": "You are the Billing Cashier. Help the owner draft and finalize bills. Prices are in INR. Be brief. If the user misses details (product name, quantity, payment mode), DO NOT guess them. Ask the user.",
+            "description": "Create bills, add items, finalize sales, generate PDF invoices, show daily sales.",
+            "system_prompt": "You are the Billing Cashier. Execute tool calls immediately. NEVER confirm or recap — just act. Only ask if a required field (product, quantity, payment mode) was not provided at all. For 'send me the invoice/bill as PDF', call generate_invoice.",
             "tools": billing_tools,
-            "model": model,
+            "model": reasoning_model,
         }
 
         khata_agent = {
             "name": "khata_agent",
             "description": "Manage customer credit, check balances, or record payments.",
-            "system_prompt": "You are the Khata (Credit Ledger) Manager. Help the owner track who owes money and record payments. Prices are in INR. Be brief. If the user misses details (customer name, amount, etc.), DO NOT guess them. Ask the user.",
+            "system_prompt": "You are the Khata Manager. Execute tool calls immediately. NEVER confirm or recap — just act. Only ask if a required field was not provided at all.",
             "tools": khata_tools,
-            "model": model,
+            "model": reasoning_model,
         }
 
+        self._validator_model = validator_model  # stash for _wrap
 
-
-        # Orchestrator
+        # Orchestrator uses low-token model — routing is classification, not generation
         self.orchestrator = create_deep_agent(
-            model=model,
-            system_prompt="""You are the Store Orchestrator. 
-            Your ONLY job is to analyze the user's request and delegate it to the correct specialized department agent.
-            If a request is ambiguous, ask the user for clarification before delegating.
-            Do not try to answer questions yourself. Delegate everything!
-            If the user asks a question that is unrelated to managing the supermarket (inventory, billing, or khata), you MUST refuse to answer and reply exactly with: 'I am a supermarket management agent. I can only assist with inventory, billing, and credit ledgers.'""",
+            model=routing_model,
+            system_prompt="""Route to the correct agent. Do NOT answer yourself.
+- inventory_agent: stock, products, shipments
+- billing_agent: bills, sales, invoices, PDF generation, daily reports
+- khata_agent: credit, balances, payments
+
+Route and stop. If off-topic: 'I can only assist with inventory, billing, and credit ledgers.'""",
             subagents=[inventory_agent, billing_agent, khata_agent],
             checkpointer=self.memory
         )
@@ -143,13 +150,7 @@ If the agent hallucinated ANY numbers (e.g., guessing a price or GST), you must 
 Respond strictly with a JSON object: {{"approved": true/false, "reason": "..."}}
 """
             
-            validator_llm = ChatOpenAI(
-                model="deepseek-v4-flash",
-                temperature=0,
-                api_key=os.getenv("DEEPSEEK_API_KEY"),
-                base_url="https://api.deepseek.com/v1",
-                http_client=httpx.Client(http2=False, headers={"Connection": "close", "Accept-Encoding": "gzip, deflate"}, timeout=30.0)
-            )
+            validator_llm = self._validator_model
             
             try:
                 validation_result = validator_llm.invoke([SystemMessage(content=validator_prompt)])

@@ -1,4 +1,5 @@
 import os
+import asyncio
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -11,6 +12,28 @@ from app.models import ProcessedUpdate
 load_dotenv()
 
 app = FastAPI(title="Supermarket Ops Agent")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+PENDING_FILES = {}  # chat_id → file_path, cleaned after each webhook call
+
+
+async def send_typing(chat_id: int):
+    """Fire-and-forget typing indicator via Telegram sendChatAction."""
+    if not BOT_TOKEN:
+        return
+    import httpx
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendChatAction"
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json={"chat_id": chat_id, "action": "typing"})
+
+
+async def _keep_typing(chat_id: int):
+    """Refresh typing indicator every 4s while the LLM processes."""
+    try:
+        while True:
+            await asyncio.sleep(4)
+            await send_typing(chat_id)
+    except asyncio.CancelledError:
+        pass
 
 # To keep it simple without full python-telegram-bot webhook boilerplate,
 # we can just receive the Telegram update JSON directly.
@@ -60,14 +83,20 @@ async def telegram_webhook(update: Request):
 
     print(f"Received message from {chat_id}: {text}")
 
+    # Send typing indicator immediately; keep refreshing every 4s during LLM call
+    await send_typing(chat_id)
+    typing_task = asyncio.create_task(_keep_typing(chat_id))
+
     # 1. Instantiate the multi-agent orchestrator for this specific chat_id
     orchestrator = StoreAgentOrchestrator(chat_id=chat_id)
 
-    # 2. Get the LLM's response (this blocks while tools are called)
+    # 2. Get the LLM's response (blocking call, run in thread to not starve typing loop)
     try:
-        reply = orchestrator.handle_message(text)
+        reply = await asyncio.to_thread(orchestrator.handle_message, text)
     except Exception as e:
         reply = f"System Error: {str(e)}"
+    finally:
+        typing_task.cancel()
 
     # 3. Cache the result for idempotency (even errors — consistent on retry)
     if update_id is not None:
@@ -76,16 +105,22 @@ async def telegram_webhook(update: Request):
             session.commit()
 
     # 4. Send the response back to Telegram
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if bot_token:
+    if BOT_TOKEN:
         import httpx
-        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": reply
-        }
-        # Fire and forget response
         async with httpx.AsyncClient() as client:
-            await client.post(url, json=payload)
-            
+            await client.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                json={"chat_id": chat_id, "text": reply}
+            )
+
+            # If a tool generated a file, send it as a document
+            pending = PENDING_FILES.pop(chat_id, None)
+            if pending:
+                with open(pending, "rb") as fobj:
+                    files = {"document": (os.path.basename(pending), fobj, "application/pdf")}
+                    await client.post(
+                        f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+                        data={"chat_id": chat_id}, files=files, timeout=30.0
+                    )
+
     return {"status": "ok", "reply": reply}

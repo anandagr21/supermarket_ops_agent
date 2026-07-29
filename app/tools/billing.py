@@ -64,19 +64,9 @@ def generate_invoice(session: Session, chat_id: int, args: GenerateInvoiceInput)
     invoice_service = InvoiceService(session)
     path = invoice_service.generate(bill_id)
 
-    # Send the PDF via Telegram
-    import os
-    import httpx
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if bot_token:
-        url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
-        with open(path, "rb") as f:
-            files = {"document": (os.path.basename(path), f, "application/pdf")}
-            data = {"chat_id": chat_id}
-            resp = httpx.post(url, data=data, files=files, timeout=30.0)
-            if resp.status_code == 200:
-                return f"Invoice INV-{bill_id:04d} has been sent as a PDF."
-            else:
-                return f"Invoice saved at {path}, but Telegram upload failed: {resp.text}"
+    # Store path for main.py to pick up (side-channel, never enters LLM context)
+    import app.main as main_module
+    main_module.PENDING_FILES[chat_id] = path
 
-    return f"Invoice saved at {path}."
+    import os
+    return f"Invoice INV-{bill_id:04d} generated as PDF and sent."
