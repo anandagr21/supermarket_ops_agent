@@ -1,6 +1,6 @@
 from typing import Optional
-from sqlmodel import Session
-from app.models import Bill, BillItem, KhataTransaction
+from sqlmodel import Session, select
+from app.models import Bill, BillItem, KhataTransaction, Product
 from app.repositories.bill_repository import BillRepository
 from app.repositories.product_repository import ProductRepository
 from app.repositories.khata_repository import KhataRepository
@@ -67,8 +67,12 @@ class BillingService:
         total_sgst = 0.0
 
         for item in items:
-            from app.models import Product
-            product = self.session.get(Product, item.product_id)
+            # Lock the product row to prevent concurrent stock operations
+            product = self.session.exec(
+                select(Product)
+                .where(Product.id == item.product_id)
+                .with_for_update()
+            ).one()
 
             # Oversell Guard
             if product.stock_quantity < item.quantity:
@@ -141,8 +145,6 @@ class BillingService:
 
     def query_todays_sales(self, chat_id: int) -> str:
         from datetime import date
-        from sqlmodel import select, func
-        from app.models import Bill, BillItem, Product
         from collections import defaultdict
 
         today = date.today()
