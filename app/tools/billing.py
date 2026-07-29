@@ -1,5 +1,8 @@
 from sqlmodel import Session
-from app.schemas.billing_schemas import AddToBillInput, FinalizeBillInput, QuerySalesInput
+from app.schemas.billing_schemas import (
+    AddToBillInput, FinalizeBillInput, QuerySalesInput,
+    RemoveFromBillInput, UpdateBillItemInput, ViewDraftBillInput,
+)
 from app.services.billing_service import BillingService
 
 def get_billing_service(session: Session) -> BillingService:
@@ -21,3 +24,18 @@ def query_todays_sales(session: Session, chat_id: int, args: QuerySalesInput) ->
     """Check the total revenue and sales for today."""
     service = get_billing_service(session)
     return service.query_todays_sales(chat_id)
+
+def remove_from_bill(session: Session, chat_id: int, args: RemoveFromBillInput) -> str:
+    """Remove an item from the current draft bill."""
+    service = get_billing_service(session)
+    return service.remove_from_bill(chat_id, args.product_name)
+
+def update_bill_item(session: Session, chat_id: int, args: UpdateBillItemInput) -> str:
+    """Change the quantity of an existing item in the draft bill."""
+    service = get_billing_service(session)
+    return service.update_bill_item(chat_id, args.product_name, args.quantity)
+
+def view_draft_bill(session: Session, chat_id: int, args: ViewDraftBillInput) -> str:
+    """Show all items currently in the draft bill."""
+    service = get_billing_service(session)
+    return service.view_draft_bill(chat_id)

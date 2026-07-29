@@ -44,6 +44,65 @@ class BillingService:
         self.session.commit()
         return f"Added {quantity} {product.unit} of {product_name} to the bill."
 
+    def remove_from_bill(self, chat_id: int, product_name: str) -> str:
+        """Remove an item entirely from the current draft bill."""
+        product_name = product_name.lower().strip()
+        bill = self.bill_repo.get_draft_bill(chat_id)
+        if not bill:
+            return "No active draft bill."
+
+        product = self.product_repo.get_by_name(chat_id, product_name)
+        if not product:
+            return f"Product '{product_name}' not found in inventory."
+
+        bill_item = self.bill_repo.get_bill_item(bill.id, product.id)
+        if not bill_item:
+            return f"'{product_name}' is not in the current bill."
+
+        self.bill_repo.delete_bill_item(bill_item)
+        return f"Removed {product_name} from the bill."
+
+    def update_bill_item(self, chat_id: int, product_name: str, quantity: float) -> str:
+        """Change the quantity of an item in the current draft bill."""
+        product_name = product_name.lower().strip()
+        bill = self.bill_repo.get_draft_bill(chat_id)
+        if not bill:
+            return "No active draft bill."
+
+        product = self.product_repo.get_by_name(chat_id, product_name)
+        if not product:
+            return f"Product '{product_name}' not found in inventory."
+
+        bill_item = self.bill_repo.get_bill_item(bill.id, product.id)
+        if not bill_item:
+            return f"'{product_name}' is not in the current bill. Use add_to_bill first."
+
+        bill_item.quantity = quantity
+        self.session.add(bill_item)
+        self.session.commit()
+        return f"Updated {product_name} to {quantity} {product.unit}."
+
+    def view_draft_bill(self, chat_id: int) -> str:
+        """Show all items currently in the draft bill."""
+        bill = self.bill_repo.get_draft_bill(chat_id)
+        if not bill:
+            return "No active draft bill."
+
+        items = self.bill_repo.get_all_bill_items(bill.id)
+        if not items:
+            return "Draft bill is empty."
+
+        from app.models import Product
+        lines = []
+        for item in items:
+            product = self.session.get(Product, item.product_id)
+            name = product.name if product else f"product_{item.product_id}"
+            line_total = item.quantity * item.unit_price
+            lines.append(f"  {name}: {item.quantity} × ₹{item.unit_price} = ₹{line_total:,.0f}")
+
+        total = sum(item.quantity * item.unit_price for item in items)
+        return "Current draft bill:\n" + "\n".join(lines) + f"\n  Total: ₹{total:,.0f}"
+
     def finalize_bill(self, chat_id: int, payment_mode: str, khata_customer_name: Optional[str] = None) -> str:
         """
         Finalize the draft bill, decrement stock, and calculate taxes.

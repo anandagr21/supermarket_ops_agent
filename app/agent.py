@@ -9,7 +9,7 @@ import app.tools.inventory as inv
 from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput
 
 import app.tools.billing as bill
-from app.schemas.billing_schemas import AddToBillInput, FinalizeBillInput, QuerySalesInput
+from app.schemas.billing_schemas import AddToBillInput, FinalizeBillInput, QuerySalesInput, RemoveFromBillInput, UpdateBillItemInput, ViewDraftBillInput
 
 import app.tools.khata as khata
 from app.schemas.khata_schemas import OpenKhataInput, RecordKhataPaymentInput, GetKhataBalanceInput
@@ -34,6 +34,9 @@ class StoreAgentOrchestrator:
         
         billing_tools = [
             self._wrap(bill.add_to_bill, AddToBillInput),
+            self._wrap(bill.remove_from_bill, RemoveFromBillInput),
+            self._wrap(bill.update_bill_item, UpdateBillItemInput),
+            self._wrap(bill.view_draft_bill, ViewDraftBillInput),
             self._wrap(bill.finalize_bill, FinalizeBillInput),
             self._wrap(bill.query_todays_sales, QuerySalesInput),
         ]

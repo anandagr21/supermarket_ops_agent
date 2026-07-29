@@ -11,3 +11,13 @@ class FinalizeBillInput(BaseModel):
 
 class QuerySalesInput(BaseModel):
     pass
+
+class RemoveFromBillInput(BaseModel):
+    product_name: str = Field(description="The exact name of the product to remove from the draft bill.")
+
+class UpdateBillItemInput(BaseModel):
+    product_name: str = Field(description="The exact name of the product to update.")
+    quantity: float = Field(gt=0, description="The new quantity (must be > 0).")
+
+class ViewDraftBillInput(BaseModel):
+    pass
