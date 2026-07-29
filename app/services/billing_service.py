@@ -63,33 +63,46 @@ class BillingService:
             
         total_amount = 0.0
         total_tax = 0.0
-        
+        total_cgst = 0.0
+        total_sgst = 0.0
+
         for item in items:
-            # Actually let's just query it safely
             from app.models import Product
             product = self.session.get(Product, item.product_id)
-            
+
             # Oversell Guard
             if product.stock_quantity < item.quantity:
                 self.session.rollback()
                 return f"OVERSELL PREVENTED: Cannot sell {item.quantity} of {product.name}. Only {product.stock_quantity} left in stock."
-                
+
             product.stock_quantity -= item.quantity
-            
-            # Math
+
+            # Tax math: MRP is tax-inclusive, so back-calculate base price
+            # Then split GST into CGST and SGST (50/50 for intra-state)
             item.total_price = item.quantity * product.mrp
-            gst_fraction = product.gst_slab_percent / 100.0
-            base_price = item.total_price / (1 + gst_fraction)
-            item.gst_amount = item.total_price - base_price
-            
+            gst_rate = product.gst_slab_percent / 100.0
+            base_price = item.total_price / (1 + gst_rate)
+            total_gst = round(item.total_price - base_price)
+
+            cgst = round(total_gst / 2.0)
+            sgst = total_gst - cgst  # carry rounding diff to SGST
+
+            item.gst_amount = total_gst
+            item.cgst_amount = cgst
+            item.sgst_amount = sgst
+
             total_amount += item.total_price
-            total_tax += item.gst_amount
-            
+            total_tax += total_gst
+            total_cgst += cgst
+            total_sgst += sgst
+
             self.session.add(product)
             self.session.add(item)
-            
+
         bill.total_amount = round(total_amount, 2)
-        bill.total_tax = round(total_tax, 2)
+        bill.total_tax = total_tax
+        bill.total_cgst = total_cgst
+        bill.total_sgst = total_sgst
         bill.payment_mode = payment_mode
         bill.status = "finalized"
         self.session.add(bill)
@@ -122,7 +135,7 @@ class BillingService:
             self.session.rollback()
             return f"Database error during finalization: {str(e)}"
             
-        return f"Bill finalized successfully! Total: ₹{bill.total_amount} (Includes GST: ₹{bill.total_tax}). Payment: {payment_mode}."
+        return f"Bill finalized successfully! Total: ₹{bill.total_amount} (CGST: ₹{bill.total_cgst}, SGST: ₹{bill.total_sgst}). Payment: {payment_mode}."
 
     def query_todays_sales(self, chat_id: int) -> str:
         from datetime import date
@@ -143,5 +156,7 @@ class BillingService:
             
         total_revenue = sum(b.total_amount for b in todays_bills)
         total_tax = sum(b.total_tax for b in todays_bills)
-        
-        return f"Today's Sales Summary:\nTotal Revenue: ₹{total_revenue}\nTotal Tax Collected: ₹{total_tax}\nNumber of Bills: {len(todays_bills)}"
+        total_cgst = sum(b.total_cgst for b in todays_bills)
+        total_sgst = sum(b.total_sgst for b in todays_bills)
+
+        return f"Today's Sales Summary:\nTotal Revenue: ₹{total_revenue}\nTotal Tax: ₹{total_tax} (CGST: ₹{total_cgst}, SGST: ₹{total_sgst})\nNumber of Bills: {len(todays_bills)}"

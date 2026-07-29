@@ -49,6 +49,8 @@ class Bill(SQLModel, table=True):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     total_amount: float = Field(default=0.0)
     total_tax: float = Field(default=0.0)
+    total_cgst: float = Field(default=0.0)
+    total_sgst: float = Field(default=0.0)
     payment_mode: Optional[str] = None # cash, upi, khata
     status: str = Field(default="draft") # draft, finalized
     
@@ -61,6 +63,8 @@ class BillItem(SQLModel, table=True):
     quantity: float
     unit_price: float # price per unit at the time of sale
     gst_amount: float
+    cgst_amount: float = Field(default=0.0)
+    sgst_amount: float = Field(default=0.0)
     total_price: float
     
     bill: Bill = Relationship(back_populates="items")
