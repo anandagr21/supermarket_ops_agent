@@ -2,6 +2,12 @@ from typing import List, Optional
 from datetime import datetime
 from sqlmodel import SQLModel, Field, Relationship
 
+# --- Idempotency (Telegram retry protection) ---
+class ProcessedUpdate(SQLModel, table=True):
+    update_id: int = Field(primary_key=True)
+    reply: str
+    processed_at: datetime = Field(default_factory=datetime.utcnow)
+
 # --- Preferences ---
 class OwnerPreference(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
