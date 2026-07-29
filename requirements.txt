@@ -11,3 +11,4 @@ langchain_openai
 python-telegram-bot
 httpx
 python-pptx
+fpdf2

@@ -21,3 +21,6 @@ class UpdateBillItemInput(BaseModel):
 
 class ViewDraftBillInput(BaseModel):
     pass
+
+class GenerateInvoiceInput(BaseModel):
+    bill_id: Optional[int] = Field(default=None, description="Specific bill ID. Leave blank for the most recent finalized bill.")
