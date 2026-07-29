@@ -77,15 +77,17 @@ class BillingService:
 
             product.stock_quantity -= item.quantity
 
-            # Tax math: MRP is tax-inclusive, so back-calculate base price
-            # Then split GST into CGST and SGST (50/50 for intra-state)
+            # Tax math: MRP is tax-inclusive, so back-calculate base price.
+            # CGST and SGST are computed independently from the base —
+            # same base × same rate guarantees they are always equal.
             item.total_price = item.quantity * product.mrp
             gst_rate = product.gst_slab_percent / 100.0
+            half_rate = gst_rate / 2.0
             base_price = item.total_price / (1 + gst_rate)
-            total_gst = round(item.total_price - base_price)
 
-            cgst = round(total_gst / 2.0)
-            sgst = total_gst - cgst  # carry rounding diff to SGST
+            cgst = round(base_price * half_rate)
+            sgst = round(base_price * half_rate)
+            total_gst = cgst + sgst
 
             item.gst_amount = total_gst
             item.cgst_amount = cgst
@@ -139,24 +141,63 @@ class BillingService:
 
     def query_todays_sales(self, chat_id: int) -> str:
         from datetime import date
-        from sqlmodel import select
-        from app.models import Bill
-        
+        from sqlmodel import select, func
+        from app.models import Bill, BillItem, Product
+        from collections import defaultdict
+
         today = date.today()
         statement = select(Bill).where(
             Bill.chat_id == chat_id,
             Bill.status == "finalized"
         )
         bills = self.session.exec(statement).all()
-        
+
         todays_bills = [b for b in bills if b.timestamp.date() == today]
-        
+
         if not todays_bills:
             return "There are no finalized sales for today."
-            
+
         total_revenue = sum(b.total_amount for b in todays_bills)
         total_tax = sum(b.total_tax for b in todays_bills)
         total_cgst = sum(b.total_cgst for b in todays_bills)
         total_sgst = sum(b.total_sgst for b in todays_bills)
 
-        return f"Today's Sales Summary:\nTotal Revenue: ₹{total_revenue}\nTotal Tax: ₹{total_tax} (CGST: ₹{total_cgst}, SGST: ₹{total_sgst})\nNumber of Bills: {len(todays_bills)}"
+        # Payment mode breakdown
+        mode_totals = defaultdict(float)
+        mode_counts = defaultdict(int)
+        for b in todays_bills:
+            mode = b.payment_mode or "unknown"
+            mode_totals[mode] += b.total_amount
+            mode_counts[mode] += 1
+        payment_lines = "\n".join(
+            f"  {mode}: {cnt} bills, ₹{amt:,.0f}" for mode, amt, cnt in
+            sorted([(m, mode_totals[m], mode_counts[m]) for m in mode_totals], key=lambda x: -x[1])
+        )
+
+        # Top items by quantity sold today
+        bill_ids = [b.id for b in todays_bills]
+        item_rows = self.session.exec(
+            select(BillItem).where(BillItem.bill_id.in_(bill_ids))
+        ).all()
+
+        product_totals = defaultdict(lambda: {"qty": 0.0, "revenue": 0.0})
+        for item in item_rows:
+            product = self.session.get(Product, item.product_id)
+            name = product.name if product else f"product_{item.product_id}"
+            product_totals[name]["qty"] += item.quantity
+            product_totals[name]["revenue"] += item.total_price
+
+        top_items = sorted(product_totals.items(), key=lambda x: -x[1]["qty"])[:5]
+        top_lines = "\n".join(
+            f"  {i+1}. {name}: {d['qty']:.0f} sold, ₹{d['revenue']:,.0f}"
+            for i, (name, d) in enumerate(top_items)
+        )
+
+        return (
+            f"Today's Sales Summary:\n"
+            f"Total Revenue: ₹{total_revenue:,.0f}\n"
+            f"Total Tax: ₹{total_tax} (CGST: ₹{total_cgst}, SGST: ₹{total_sgst})\n"
+            f"Bills: {len(todays_bills)}\n\n"
+            f"By Payment Mode:\n{payment_lines}\n\n"
+            f"Top Items:\n{top_lines}"
+        )
