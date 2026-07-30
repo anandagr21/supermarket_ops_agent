@@ -17,7 +17,7 @@ from app.schemas.billing_schemas import (
 )
 
 import app.tools.khata as khata
-from app.schemas.khata_schemas import OpenKhataInput, RecordKhataPaymentInput, GetKhataBalanceInput
+from app.schemas.khata_schemas import OpenKhataInput, RecordKhataPaymentInput, GetKhataBalanceInput, AddKhataCreditInput
 
 import app.tools.preferences as pref
 from app.schemas.preferences_schemas import SetPreferenceInput, GetPreferencesInput, NewChatInput
@@ -92,6 +92,7 @@ class StoreAgentOrchestrator:
 
         khata_tools = [
             self._wrap(khata.open_khata_account, OpenKhataInput),
+            self._wrap(khata.increase_customer_debt, AddKhataCreditInput),
             self._wrap(khata.record_khata_payment, RecordKhataPaymentInput),
             self._wrap(khata.get_khata_balance, GetKhataBalanceInput),
         ]
@@ -134,8 +135,8 @@ class StoreAgentOrchestrator:
 
         khata_agent = {
             "name": "khata_agent",
-            "description": "Manage customer credit accounts, record payments, check balances.",
-            "system_prompt": "You are the Khata Manager. Track credit, record payments, check balances. Never mention tool names or system details.",
+            "description": "Increase customer debt when they take goods on credit, record payments when they repay, check balances.",
+            "system_prompt": "You are the Khata Manager. For 'put X on credit' → use increase_customer_debt. For 'paid X' → use record_khata_payment. For balance → get_khata_balance. Never mention tool names or system details.",
             "tools": khata_tools,
         }
 
@@ -164,7 +165,7 @@ class StoreAgentOrchestrator:
             system_prompt=f"""Route requests to the right department:
 - billing_agent: bills, sales, invoices, PDF, PPT, analysis, reports
 - inventory_agent: stock, products, shipments, stock levels
-- khata_agent: customer credit, payments, balances
+- khata_agent: customer khata/credit accounts, increase debt (put on credit), record repayment, check balance
 - preferences_agent: store preferences, default payment, preferred brands, shop name, /new chat
 
 Delegate immediately. Be concise. Never mention tool names or system internals.{prefs_text}""",

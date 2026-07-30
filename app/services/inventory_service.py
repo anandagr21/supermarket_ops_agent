@@ -2,6 +2,13 @@ from typing import Optional
 from app.models import Product
 from app.repositories.product_repository import ProductRepository
 
+WHOLE_UNITS = {"packet", "dozen", "piece"}
+
+def _fmt_qty(qty: float, unit: str) -> str:
+    if unit in WHOLE_UNITS:
+        return f"{int(qty)} {unit}"
+    return f"{qty} {unit}"
+
 class InventoryService:
     """
     Handles all business logic for Inventory.
@@ -56,17 +63,20 @@ class InventoryService:
             product = self.repo.get_by_name(chat_id, name)
             if not product:
                 return f"Product '{name}' not found."
-            return f"Stock for {name}: {product.stock_quantity} {product.unit} (MRP: ₹{product.mrp})"
+            return f"Stock for {name}: {_fmt_qty(product.stock_quantity, product.unit)} (MRP: ₹{product.mrp})"
         else:
             low_stock_items = self.repo.get_low_stock(chat_id)
             if not low_stock_items:
                 return "No items are currently low on stock."
-            lines = [f"{p.name}: {p.stock_quantity} {p.unit} left" for p in low_stock_items]
+            lines = [f"{p.name}: {_fmt_qty(p.stock_quantity, p.unit)} left" for p in low_stock_items]
             return "Low stock items:\n" + "\n".join(lines)
 
     def list_products(self, chat_id: int) -> str:
         products = self.repo.get_all(chat_id)
         if not products:
             return "No products in inventory yet."
-        lines = [f"{p.name}: {p.stock_quantity} {p.unit}, MRP ₹{p.mrp} (cost ₹{p.cost_price})" for p in products]
+        lines = []
+        for p in products:
+            qty = _fmt_qty(p.stock_quantity, p.unit)
+            lines.append(f"{p.name}: {qty}, MRP ₹{p.mrp} (cost ₹{p.cost_price})")
         return "Inventory:\n" + "\n".join(lines)

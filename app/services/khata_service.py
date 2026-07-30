@@ -44,8 +44,34 @@ class KhataService:
     def get_balance(self, chat_id: int, customer_name: str) -> str:
         customer_name = customer_name.lower().strip()
         account = self.repo.get_account(chat_id, customer_name)
-        
+
         if not account:
             return f"No Khata account found for '{customer_name}'."
-            
+
         return f"Khata balance for '{customer_name}': ₹{account.balance}."
+
+    def add_credit(self, chat_id: int, customer_name: str, amount: float) -> str:
+        """Add a purchase-on-credit entry (e.g. 'put ₹500 on Ramesh's credit')."""
+        customer_name = customer_name.lower().strip()
+        account = self.repo.get_account(chat_id, customer_name)
+
+        if not account:
+            # Auto-create account if it doesn't exist
+            account = KhataAccount(chat_id=chat_id, customer_name=customer_name)
+            self.session.add(account)
+            self.session.commit()
+            self.session.refresh(account)
+
+        account.balance += amount
+        txn = KhataTransaction(
+            account_id=account.id,
+            amount=amount,
+            transaction_type="purchase_on_credit",
+            reference="Manual credit entry",
+        )
+
+        self.session.add(account)
+        self.session.add(txn)
+        self.session.commit()
+
+        return f"Added ₹{amount} to {customer_name}'s credit. New balance: ₹{account.balance}."

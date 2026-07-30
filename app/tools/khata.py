@@ -1,5 +1,5 @@
 from sqlmodel import Session
-from app.schemas.khata_schemas import OpenKhataInput, RecordKhataPaymentInput, GetKhataBalanceInput
+from app.schemas.khata_schemas import OpenKhataInput, RecordKhataPaymentInput, GetKhataBalanceInput, AddKhataCreditInput
 from app.repositories.khata_repository import KhataRepository
 from app.services.khata_service import KhataService
 from app.logger import setup_logger
@@ -35,4 +35,13 @@ def get_khata_balance(session: Session, chat_id: int, args: GetKhataBalanceInput
     service = get_khata_service(session)
     result = service.get_balance(chat_id, args.customer_name)
     log.info(f"chat_id={chat_id} | get_khata_balance → {result}")
+    return result
+
+
+def increase_customer_debt(session: Session, chat_id: int, args: AddKhataCreditInput) -> str:
+    """Customer takes goods on credit. Their debt INCREASES. Use this when owner says 'put money on credit' or 'add to khata'."""
+    log.info(f"chat_id={chat_id} | increase_customer_debt({args.customer_name}, ₹{args.amount})")
+    service = get_khata_service(session)
+    result = service.add_credit(chat_id, args.customer_name, args.amount)
+    log.info(f"chat_id={chat_id} | increase_customer_debt → {result}")
     return result
