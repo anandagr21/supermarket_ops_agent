@@ -1,7 +1,7 @@
 from deepagents import create_deep_agent, FilesystemPermission
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse, ResponseT, ContextT
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from langchain_core.callbacks import BaseCallbackHandler
 from sqlmodel import Session
@@ -46,16 +46,13 @@ class _ToolCallGuardMiddleware(AgentMiddleware[dict, ContextT, ResponseT]):
 
     def wrap_model_call(
         self, request: ModelRequest[ContextT],
-        handler: callable,
+        handler,
     ) -> ModelResponse[ResponseT]:
-        # Count tool messages; if threshold exceeded, inject stop instruction
-        msgs = list(request.messages) if hasattr(request, 'messages') else []
-        tool_count = sum(1 for m in msgs if hasattr(m, 'type') and m.type == 'tool')
+        msgs = request.messages if hasattr(request, 'messages') else []
+        tool_count = sum(1 for m in msgs if isinstance(m, ToolMessage))
         if tool_count >= self.max_calls:
             log.warning(f"ToolCallGuard: {tool_count} tool calls, forcing stop")
-            return ModelResponse(
-                result={"messages": [HumanMessage(content="Max tool calls reached. Please respond to the user now.")]}
-            )
+            return ModelResponse(result=[AIMessage(content="Safe stop — task was taking too many steps. I'll use what I have so far.")])
         return handler(request)
 
 
@@ -179,7 +176,7 @@ class StoreAgentOrchestrator:
         self.agent = create_deep_agent(
             model=model,
             tools=[],
-            middleware=[_ToolCallGuardMiddleware(max_calls=8)],
+            middleware=[_ToolCallGuardMiddleware(max_calls=15)],
             system_prompt=f"""Route requests to the right department:
 - billing_agent: bills, sales, invoices, PDF, PPT, analysis, reports
 - inventory_agent: stock, products, shipments, stock levels
