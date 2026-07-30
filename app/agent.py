@@ -17,7 +17,7 @@ from app.schemas.billing_schemas import (
 )
 
 import app.tools.khata as khata
-from app.schemas.khata_schemas import OpenKhataInput, RecordKhataPaymentInput, GetKhataBalanceInput, AddKhataCreditInput
+from app.schemas.khata_schemas import OpenKhataInput, RecordKhataPaymentInput, GetKhataBalanceInput, AddKhataCreditInput, ListKhataCustomersInput
 
 import app.tools.preferences as pref
 from app.schemas.preferences_schemas import SetPreferenceInput, GetPreferencesInput, NewChatInput
@@ -95,6 +95,7 @@ class StoreAgentOrchestrator:
             self._wrap(khata.increase_customer_debt, AddKhataCreditInput),
             self._wrap(khata.record_khata_payment, RecordKhataPaymentInput),
             self._wrap(khata.get_khata_balance, GetKhataBalanceInput),
+            self._wrap(khata.list_khata_customers, ListKhataCustomersInput),
         ]
 
         pref_tools = [
@@ -147,15 +148,15 @@ class StoreAgentOrchestrator:
 
         khata_agent = {
             "name": "khata_agent",
-            "description": "Increase customer debt when they take goods on credit, record payments when they repay, check balances.",
-            "system_prompt": "You are the Khata Manager. 'put on credit' → increase_customer_debt. 'paid' → record_khata_payment. balance → get_khata_balance. Never mention tool names." + prefs_suffix,
+            "description": "Increase customer debt on credit, record repayments, check balances, list all customers.",
+            "system_prompt": "You are the Khata Manager. 'put on credit' → increase_customer_debt. 'paid' → record_khata_payment. balance → get_khata_balance. 'list customers' → list_khata_customers. Never mention tool names." + prefs_suffix,
             "tools": khata_tools,
         }
 
         preferences_agent = {
             "name": "preferences_agent",
-            "description": "Set or view store preferences like default payment method, preferred brands, store name, and start a fresh chat.",
-            "system_prompt": "You are the Preferences Manager. Set, view, or manage store preferences. Never mention tool names or system details.",
+            "description": "Set or view store preferences like default payment method, preferred brands, store name, GST rate. Use set_preference with exact keys.",
+            "system_prompt": "You are the Preferences Manager. For setting preferences use these EXACT keys: 'default_payment' (cash/upi/card/khata), 'default_gst_rate' (5/12/18 as number), 'default_atta' (brand), 'shop_name', 'gstin', 'shop_address'. Call set_preference(key, value) directly — don't ask for confirmation. Call get_preferences to view. /new → new_chat.",
             "tools": pref_tools,
         }
 
