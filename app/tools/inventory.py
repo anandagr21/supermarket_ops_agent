@@ -1,5 +1,5 @@
 from sqlmodel import Session
-from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput
+from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput, ListProductsInput
 from app.repositories.product_repository import ProductRepository
 from app.services.inventory_service import InventoryService
 from app.logger import setup_logger
@@ -38,4 +38,12 @@ def query_stock(session: Session, chat_id: int, args: QueryStockInput) -> str:
     service = get_inventory_service(session)
     result = service.query_stock(chat_id, args.name)
     log.info(f"chat_id={chat_id} | query_stock → {result[:120]}")
+    return result
+
+def list_products(session: Session, chat_id: int, args: ListProductsInput) -> str:
+    """List ALL products in inventory with stock levels and prices."""
+    log.info(f"chat_id={chat_id} | list_products")
+    service = get_inventory_service(session)
+    result = service.list_products(chat_id)
+    log.info(f"chat_id={chat_id} | list_products → {result[:120]}")
     return result

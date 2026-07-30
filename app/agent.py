@@ -7,7 +7,7 @@ from sqlmodel import Session
 from app.database import engine
 
 import app.tools.inventory as inv
-from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput
+from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput, ListProductsInput
 
 import app.tools.billing as bill
 from app.schemas.billing_schemas import (
@@ -19,12 +19,16 @@ from app.schemas.billing_schemas import (
 import app.tools.khata as khata
 from app.schemas.khata_schemas import OpenKhataInput, RecordKhataPaymentInput, GetKhataBalanceInput
 
+import app.tools.preferences as pref
+from app.schemas.preferences_schemas import SetPreferenceInput, GetPreferencesInput, NewChatInput
+
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.logger import setup_logger
 
 log = setup_logger("agent")
 GLOBAL_MEMORY = MemorySaver()
+_THREAD_COUNTERS: dict[int, int] = {}  # chat_id → counter for /new thread switching
 
 # Deny ALL filesystem operations globally — our tools talk to a DB, not disk
 DENY_FILESYSTEM = [
@@ -72,6 +76,7 @@ class StoreAgentOrchestrator:
             self._wrap(inv.add_product, AddProductInput),
             self._wrap(inv.receive_stock, ReceiveStockInput),
             self._wrap(inv.query_stock, QueryStockInput),
+            self._wrap(inv.list_products, ListProductsInput),
         ]
 
         billing_tools = [
@@ -89,6 +94,12 @@ class StoreAgentOrchestrator:
             self._wrap(khata.open_khata_account, OpenKhataInput),
             self._wrap(khata.record_khata_payment, RecordKhataPaymentInput),
             self._wrap(khata.get_khata_balance, GetKhataBalanceInput),
+        ]
+
+        pref_tools = [
+            self._wrap(pref.set_preference, SetPreferenceInput),
+            self._wrap(pref.get_preferences, GetPreferencesInput),
+            self._wrap(pref.new_chat, NewChatInput),
         ]
 
         import os
@@ -128,16 +139,36 @@ class StoreAgentOrchestrator:
             "tools": khata_tools,
         }
 
+        preferences_agent = {
+            "name": "preferences_agent",
+            "description": "Set or view store preferences like default payment method, preferred brands, store name, and start a fresh chat.",
+            "system_prompt": "You are the Preferences Manager. Set, view, or manage store preferences. Never mention tool names or system details.",
+            "tools": pref_tools,
+        }
+
+        # Fetch persisted preferences for this store
+        from sqlmodel import Session
+        from app.services.preferences_service import PreferencesService
+        from app.database import engine as db_engine
+        with Session(db_engine) as s:
+            store_prefs = PreferencesService(s).get_all(chat_id)
+        prefs_text = ""
+        if store_prefs:
+            prefs_text = "\n\nStanding preferences (apply these automatically):\n" + "\n".join(
+                f"- {k}: {v}" for k, v in store_prefs.items()
+            )
+
         self.agent = create_deep_agent(
             model=model,
             tools=[],
-            system_prompt="""Route requests to the right department:
+            system_prompt=f"""Route requests to the right department:
 - billing_agent: bills, sales, invoices, PDF, PPT, analysis, reports
 - inventory_agent: stock, products, shipments, stock levels
 - khata_agent: customer credit, payments, balances
+- preferences_agent: store preferences, default payment, preferred brands, shop name, /new chat
 
-Delegate immediately. Be concise. Never mention tool names or system internals.""",
-            subagents=[inventory_agent, billing_agent, khata_agent],
+Delegate immediately. Be concise. Never mention tool names or system internals.{prefs_text}""",
+            subagents=[inventory_agent, billing_agent, khata_agent, preferences_agent],
             permissions=DENY_FILESYSTEM,
             checkpointer=self.memory,
         )
@@ -158,7 +189,13 @@ Delegate immediately. Be concise. Never mention tool names or system internals."
         import time
         log.info(f"chat_id={self.chat_id} | ▶ handle_message: '{message[:120]}'")
         start = time.time()
-        config = {"configurable": {"thread_id": str(self.chat_id)}}
+
+        # /new chat: bump thread so conversation history resets, data stays in DB
+        if message.strip().lower().startswith("/new"):
+            _THREAD_COUNTERS[self.chat_id] = _THREAD_COUNTERS.get(self.chat_id, 0) + 1
+
+        thread_id = f"{self.chat_id}_v{_THREAD_COUNTERS.get(self.chat_id, 0)}"
+        config = {"configurable": {"thread_id": thread_id}}
         result = self.agent.invoke(
             {"messages": [HumanMessage(content=message)]},
             config=config,

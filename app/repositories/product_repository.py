@@ -18,9 +18,14 @@ class ProductRepository:
     def get_low_stock(self, chat_id: int) -> List[Product]:
         return self.session.exec(
             select(Product).where(
-                Product.chat_id == chat_id, 
+                Product.chat_id == chat_id,
                 Product.stock_quantity <= Product.reorder_level
             )
+        ).all()
+
+    def get_all(self, chat_id: int) -> List[Product]:
+        return self.session.exec(
+            select(Product).where(Product.chat_id == chat_id)
         ).all()
         
     def save(self, product: Product) -> Product:

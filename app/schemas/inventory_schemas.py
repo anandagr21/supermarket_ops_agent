@@ -17,3 +17,6 @@ class ReceiveStockInput(BaseModel):
 
 class QueryStockInput(BaseModel):
     name: Optional[str] = Field(default=None, description="Specific product name to check. Leave blank to check all low stock.")
+
+class ListProductsInput(BaseModel):
+    pass

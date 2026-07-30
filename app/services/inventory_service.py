@@ -63,3 +63,10 @@ class InventoryService:
                 return "No items are currently low on stock."
             lines = [f"{p.name}: {p.stock_quantity} {p.unit} left" for p in low_stock_items]
             return "Low stock items:\n" + "\n".join(lines)
+
+    def list_products(self, chat_id: int) -> str:
+        products = self.repo.get_all(chat_id)
+        if not products:
+            return "No products in inventory yet."
+        lines = [f"{p.name}: {p.stock_quantity} {p.unit}, MRP ₹{p.mrp} (cost ₹{p.cost_price})" for p in products]
+        return "Inventory:\n" + "\n".join(lines)

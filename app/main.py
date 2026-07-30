@@ -19,6 +19,53 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 PENDING_FILES = {}  # chat_id → file_path, cleaned after each webhook call
 
 
+async def _transcribe_voice(voice: dict) -> str | None:
+    """Download a Telegram voice note and transcribe via OpenAI Whisper."""
+    from tempfile import NamedTemporaryFile
+
+    if not BOT_TOKEN or not os.getenv("OPENAI_API_KEY"):
+        return None
+
+    try:
+        import httpx
+
+        # 1. Get file path from Telegram
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/getFile",
+                params={"file_id": voice["file_id"]},
+                timeout=15.0,
+            )
+            file_info = resp.json()
+            file_path = file_info["result"]["file_path"]
+
+            # 2. Download the OGG file
+            dl_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+            resp = await client.get(dl_url, timeout=30.0)
+            audio_bytes = resp.content
+
+        # 3. Save to temp file for Whisper upload
+        with NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+
+        # 4. Transcribe via OpenAI Whisper
+        from openai import OpenAI
+
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        with open(tmp_path, "rb") as f:
+            transcript = openai_client.audio.transcriptions.create(
+                model="whisper-1", file=f, response_format="text"
+            )
+
+        os.unlink(tmp_path)
+        return transcript.strip() if transcript else None
+
+    except Exception as e:
+        log.error(f"Voice transcription error: {e}")
+        return None
+
+
 async def send_typing(chat_id: int):
     """Fire-and-forget typing indicator via Telegram sendChatAction."""
     if not BOT_TOKEN:
@@ -80,9 +127,20 @@ async def telegram_webhook(update: Request):
 
     chat_id = message.get("chat", {}).get("id")
     text = message.get("text")
+    voice = message.get("voice")
 
-    if not chat_id or not text:
-        return {"status": "ok", "msg": "Missing chat_id or text"}
+    if not chat_id:
+        return {"status": "ok", "msg": "Missing chat_id"}
+
+    # Voice note → transcribe via Whisper
+    if voice and not text:
+        text = await _transcribe_voice(voice)
+        if not text:
+            return {"status": "ok", "msg": "Voice transcription failed"}
+        log.info(f"chat_id={chat_id} | voice transcribed → '{text[:100]}'")
+
+    if not text:
+        return {"status": "ok", "msg": "Missing text"}
 
     log.info(f"chat_id={chat_id} | text='{text[:100]}'")
 
