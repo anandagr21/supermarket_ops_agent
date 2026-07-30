@@ -2,6 +2,10 @@ from sqlmodel import Session
 from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput
 from app.repositories.product_repository import ProductRepository
 from app.services.inventory_service import InventoryService
+from app.logger import setup_logger
+
+log = setup_logger("tools.inventory")
+
 
 def get_inventory_service(session: Session) -> InventoryService:
     repo = ProductRepository(session)
@@ -11,19 +15,27 @@ def get_inventory_service(session: Session) -> InventoryService:
 
 def add_product(session: Session, chat_id: int, args: AddProductInput) -> str:
     """Add a new product/SKU to the store."""
-
+    log.info(f"chat_id={chat_id} | add_product({args.name}, unit={args.unit}, gst={args.gst_slab_percent}%, cost=₹{args.cost_price}, mrp=₹{args.mrp})")
     service = get_inventory_service(session)
-    return service.add_product(
-        chat_id, args.name, args.unit, args.gst_slab_percent, 
+    result = service.add_product(
+        chat_id, args.name, args.unit, args.gst_slab_percent,
         args.cost_price, args.mrp, args.hsn_code
     )
+    log.info(f"chat_id={chat_id} | add_product → {result}")
+    return result
 
 def receive_stock(session: Session, chat_id: int, args: ReceiveStockInput) -> str:
     """Add stock to an existing product. Can optionally update cost and MRP."""
+    log.info(f"chat_id={chat_id} | receive_stock({args.name}, qty={args.quantity})")
     service = get_inventory_service(session)
-    return service.receive_stock(chat_id, args.name, args.quantity, args.cost_price, args.mrp)
+    result = service.receive_stock(chat_id, args.name, args.quantity, args.cost_price, args.mrp)
+    log.info(f"chat_id={chat_id} | receive_stock → {result}")
+    return result
 
 def query_stock(session: Session, chat_id: int, args: QueryStockInput) -> str:
     """Check stock for a specific product, or list low stock items if name is not provided."""
+    log.info(f"chat_id={chat_id} | query_stock(name={args.name})")
     service = get_inventory_service(session)
-    return service.query_stock(chat_id, args.name)
+    result = service.query_stock(chat_id, args.name)
+    log.info(f"chat_id={chat_id} | query_stock → {result[:120]}")
+    return result

@@ -8,6 +8,9 @@ from sqlmodel import Session, select
 from app.database import create_db_and_tables, engine
 from app.agent import StoreAgentOrchestrator
 from app.models import ProcessedUpdate
+from app.logger import setup_logger
+
+log = setup_logger("webhook")
 
 load_dotenv()
 
@@ -44,7 +47,7 @@ class TelegramUpdate(BaseModel):
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
-    print("Database tables ensured.")
+    log.info("Database tables ensured.")
 
 @app.get("/")
 def read_root():
@@ -67,7 +70,7 @@ async def telegram_webhook(update: Request):
                 select(ProcessedUpdate).where(ProcessedUpdate.update_id == update_id)
             ).first()
             if cached:
-                print(f"Skipping duplicate update_id={update_id}")
+                log.info(f"Duplicate update_id={update_id}, returning cached reply")
                 return {"status": "ok", "reply": cached.reply, "cached": True}
 
     # Safely extract message and chat_id
@@ -81,7 +84,7 @@ async def telegram_webhook(update: Request):
     if not chat_id or not text:
         return {"status": "ok", "msg": "Missing chat_id or text"}
 
-    print(f"Received message from {chat_id}: {text}")
+    log.info(f"chat_id={chat_id} | text='{text[:100]}'")
 
     # Send typing indicator immediately; keep refreshing every 4s during LLM call
     await send_typing(chat_id)
