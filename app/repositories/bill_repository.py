@@ -8,21 +8,37 @@ class BillRepository:
         self.session = session
         
     def get_draft_bill(self, chat_id: int) -> Optional[Bill]:
-        # Return the most recent draft (in case parallel tool calls created multiple)
-        drafts = self.session.exec(
+        return self.session.exec(
             select(Bill).where(Bill.chat_id == chat_id, Bill.status == "draft")
             .order_by(Bill.id.desc())
-        ).all()
-        if not drafts:
-            return None
-        # Clean up stale duplicates — delete items first, then the bill
-        if len(drafts) > 1:
-            for extra in drafts[1:]:
-                for item in self.get_all_bill_items(extra.id):
-                    self.session.delete(item)
-                self.session.delete(extra)
+        ).first()
+
+    def get_or_create_draft_bill(self, chat_id: int) -> Bill:
+        """Get existing draft or create one. Handles parallel tool calls by
+        retrying once if a race created a duplicate draft between check and create."""
+        import time
+        bill = self.get_draft_bill(chat_id)
+        if bill:
+            return bill
+        bill = Bill(chat_id=chat_id, status="draft")
+        self.session.add(bill)
+        try:
             self.session.commit()
-        return drafts[0]
+            self.session.refresh(bill)
+            return bill
+        except Exception:
+            self.session.rollback()
+            # Another parallel call already created a draft — retry once
+            time.sleep(0.1)
+            bill = self.get_draft_bill(chat_id)
+            if bill:
+                return bill
+            # Still none? retry create
+            bill = Bill(chat_id=chat_id, status="draft")
+            self.session.add(bill)
+            self.session.commit()
+            self.session.refresh(bill)
+            return bill
         
     def get_bill_item(self, bill_id: int, product_id: int) -> Optional[BillItem]:
         return self.session.exec(

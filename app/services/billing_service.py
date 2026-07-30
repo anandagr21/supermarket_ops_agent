@@ -19,12 +19,7 @@ class BillingService:
         if not product:
             return f"Product '{product_name}' not found in inventory."
             
-        bill = self.bill_repo.get_draft_bill(chat_id)
-        if not bill:
-            bill = Bill(chat_id=chat_id, status="draft")
-            self.session.add(bill)
-            self.session.commit()
-            self.session.refresh(bill)
+        bill = self.bill_repo.get_or_create_draft_bill(chat_id)
             
         bill_item = self.bill_repo.get_bill_item(bill.id, product.id)
         

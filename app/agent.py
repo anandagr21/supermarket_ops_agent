@@ -1,6 +1,7 @@
 from deepagents import create_deep_agent, FilesystemPermission
+from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse, ResponseT, ContextT
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from langchain_core.callbacks import BaseCallbackHandler
 from sqlmodel import Session
@@ -28,16 +29,31 @@ from app.logger import setup_logger
 
 log = setup_logger("agent")
 GLOBAL_MEMORY = MemorySaver()
-_THREAD_COUNTERS: dict[int, int] = {}  # chat_id → counter for /new thread switching
+_THREAD_COUNTERS: dict[int, int] = {}
 
-# Deny ALL filesystem operations globally — our tools talk to a DB, not disk
 DENY_FILESYSTEM = [
-    FilesystemPermission(
-        operations=["read", "write", "delete"],
-        paths=["/**"],
-        mode="deny",
-    ),
+    FilesystemPermission(operations=["read", "write", "delete"], paths=["/**"], mode="deny")
 ]
+
+
+class _ToolCallGuardMiddleware(AgentMiddleware[dict, ContextT, ResponseT]):
+    """Hard-stop agent after max_tool_calls within a single turn. Prevents loops."""
+    name = "ToolCallGuardMiddleware"
+
+    def __init__(self, max_calls: int = 15):
+        super().__init__()
+        self.max_calls = max_calls
+
+    def wrap_model_call(
+        self, request: ModelRequest[ContextT],
+        handler,
+    ) -> ModelResponse[ResponseT]:
+        msgs = request.messages if hasattr(request, 'messages') else []
+        tool_count = sum(1 for m in msgs if isinstance(m, ToolMessage))
+        if tool_count >= self.max_calls:
+            log.warning(f"ToolCallGuard: {tool_count} tool calls, forcing stop")
+            return ModelResponse(result=[AIMessage(content="Safe stop — task was taking too many steps. I'll use what I have so far.")])
+        return handler(request)
 
 
 class AgentCallback(BaseCallbackHandler):
@@ -66,7 +82,7 @@ class AgentCallback(BaseCallbackHandler):
 
 
 class StoreAgentOrchestrator:
-    """Multi-agent orchestrator with filesystem denied via permissions."""
+    """Multi-agent orchestrator with tool-call loop guard."""
 
     def __init__(self, chat_id: int):
         self.chat_id = chat_id
@@ -120,7 +136,6 @@ class StoreAgentOrchestrator:
             callbacks=[AgentCallback()],
         )
 
-        # Fetch preferences BEFORE building subagents so prompts get injected
         from sqlmodel import Session as Sess2
         from app.services.preferences_service import PreferencesService
         from app.database import engine as db_engine2
@@ -128,48 +143,47 @@ class StoreAgentOrchestrator:
             store_prefs = PreferencesService(s).get_all(chat_id)
         prefs_suffix = ""
         if store_prefs:
-            prefs_suffix = "\n\nPreferences: " + ", ".join(
-                f"{k}={v}" for k, v in store_prefs.items()
-            )
+            prefs_suffix = "\n\nPreferences: " + ", ".join(f"{k}={v}" for k, v in store_prefs.items())
 
         inventory_agent = {
             "name": "inventory_agent",
             "description": "Manage stock, add products, receive shipments, check inventory levels.",
-            "system_prompt": "You are the Inventory Manager. Add products, receive shipments, check stock. Apply standing preferences when adding (e.g. default GST). Never mention tool names." + prefs_suffix,
+            "system_prompt": "Add products, receive shipments, check stock, list inventory. One call per request — never retry. Apply preferences when present." + prefs_suffix,
             "tools": inventory_tools,
         }
 
         billing_agent = {
             "name": "billing_agent",
             "description": "Create bills, edit bills, finalize sales, show daily sales, generate PDF invoices, generate PPT analysis decks.",
-            "system_prompt": "You are the Billing Cashier. FLOW: 1) add_to_bill ALL items parallel, 2) view_draft_bill, 3) finalize_bill. Edits: update_bill_item SETS qty, remove_from_bill drops. Apply standing preferences (e.g. default_payment). Never create a new bill when draft exists." + prefs_suffix,
+            "system_prompt": "FLOW: 1) add_to_bill all items parallel 2) view_draft 3) finalize_bill. Edits: update_bill_item SETS qty, remove_from_bill drops. Apply preferences (default_payment). One call per request — never retry." + prefs_suffix,
             "tools": billing_tools,
         }
 
         khata_agent = {
             "name": "khata_agent",
             "description": "Increase customer debt on credit, record repayments, check balances, list all customers.",
-            "system_prompt": "You are the Khata Manager. 'put on credit' → increase_customer_debt. 'paid' → record_khata_payment. balance → get_khata_balance. 'list customers' → list_khata_customers. Never mention tool names." + prefs_suffix,
+            "system_prompt": "'put on credit'→increase_customer_debt. 'paid'→record_khata_payment. balance→get_khata_balance. 'list customers'→list_khata_customers. One call per request — never retry." + prefs_suffix,
             "tools": khata_tools,
         }
 
         preferences_agent = {
             "name": "preferences_agent",
-            "description": "Set or view store preferences like default payment method, preferred brands, store name, GST rate. Use set_preference with exact keys.",
-            "system_prompt": "You are the Preferences Manager. When the owner says 'set my GST to 5%', call set_preference(key='default_gst_rate', value='5%'). For 'always use UPI' → set_preference(key='default_payment', value='upi'). For 'default atta is Aashirvaad' → set_preference(key='default_atta', value='Aashirvaad 5kg'). For 'my shop is X' → set_preference(key='shop_name', value='X'). To view → get_preferences. /new → new_chat. Act immediately — no confirmation.",
+            "description": "Set or view store preferences: GST rate, default payment method, preferred brands, shop name, GSTIN, address.",
+            "system_prompt": "Call set_preference immediately with: GST/tax→key='default_gst_rate', payment/UPI/cash→key='default_payment', atta/brand→key='default_atta', shop→key='shop_name', gstin→key='gstin', address→key='shop_address'. View→get_preferences. /new→new_chat. One call per request — never retry.",
             "tools": pref_tools,
         }
 
         self.agent = create_deep_agent(
             model=model,
             tools=[],
-            system_prompt=f"""Route to the right department:
+            middleware=[_ToolCallGuardMiddleware(max_calls=15)],
+            system_prompt=f"""Route requests to the right department:
 - billing_agent: bills, sales, invoices, PDF, PPT, analysis, reports
 - inventory_agent: stock, products, shipments, stock levels
 - khata_agent: customer khata/credit, increase debt, repay, balance, list customers
-- preferences_agent: store preferences, default payment, brand, shop, /new chat
+- preferences_agent: store preferences, GST rate, default payment, brand, shop name, /new chat
 
-Delegate. Be concise. Never mention tool names or internals.{prefs_suffix}""",
+Delegate immediately. Be concise. Never mention tool names or internals.{prefs_suffix}""",
             subagents=[inventory_agent, billing_agent, khata_agent, preferences_agent],
             permissions=DENY_FILESYSTEM,
             checkpointer=self.memory,
@@ -184,13 +198,10 @@ Delegate. Be concise. Never mention tool names or internals.{prefs_suffix}""",
             except Exception as e:
                 msg = str(e)
                 if "IntegrityError" in msg or "constraint" in msg:
-                    return "Could not complete the operation — some required details were missing. Please provide all product details (name, unit, GST%, cost, MRP) and try again."
-                return f"Operation failed. Please try again with complete details."
+                    return "Could not complete the operation — some required details were missing."
+                return "Operation failed. Please try again."
         return StructuredTool.from_function(
-            func=wrapper,
-            name=func.__name__,
-            description=func.__doc__,
-            args_schema=schema,
+            func=wrapper, name=func.__name__, description=func.__doc__, args_schema=schema,
         )
 
     def handle_message(self, message: str) -> str:
@@ -198,12 +209,11 @@ Delegate. Be concise. Never mention tool names or internals.{prefs_suffix}""",
         log.info(f"chat_id={self.chat_id} | ▶ handle_message: '{message[:120]}'")
         start = time.time()
 
-        # /new chat: bump thread so conversation history resets, data stays in DB
         if message.strip().lower().startswith("/new"):
             _THREAD_COUNTERS[self.chat_id] = _THREAD_COUNTERS.get(self.chat_id, 0) + 1
 
         thread_id = f"{self.chat_id}_v{_THREAD_COUNTERS.get(self.chat_id, 0)}"
-        config = {"configurable": {"thread_id": thread_id}}
+        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 25}
         result = self.agent.invoke(
             {"messages": [HumanMessage(content=message)]},
             config=config,
