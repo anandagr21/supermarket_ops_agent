@@ -24,3 +24,6 @@ class ViewDraftBillInput(BaseModel):
 
 class GenerateInvoiceInput(BaseModel):
     bill_id: Optional[int] = Field(default=None, description="Specific bill ID. Leave blank for the most recent finalized bill.")
+
+class GenerateAnalysisInput(BaseModel):
+    pass

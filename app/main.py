@@ -104,8 +104,12 @@ async def telegram_webhook(update: Request):
     # 3. Cache the result for idempotency (even errors — consistent on retry)
     if update_id is not None:
         with Session(engine) as session:
-            session.add(ProcessedUpdate(update_id=update_id, reply=reply))
-            session.commit()
+            try:
+                session.add(ProcessedUpdate(update_id=update_id, reply=reply))
+                session.commit()
+            except Exception:
+                session.rollback()
+                log.info(f"update_id={update_id} already cached by concurrent request")
 
     # 4. Send the response back to Telegram
     if BOT_TOKEN:
@@ -119,8 +123,10 @@ async def telegram_webhook(update: Request):
             # If a tool generated a file, send it as a document
             pending = PENDING_FILES.pop(chat_id, None)
             if pending:
+                ext = os.path.splitext(pending)[1]
+                mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation" if ext == ".pptx" else "application/pdf"
                 with open(pending, "rb") as fobj:
-                    files = {"document": (os.path.basename(pending), fobj, "application/pdf")}
+                    files = {"document": (os.path.basename(pending), fobj, mime)}
                     await client.post(
                         f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
                         data={"chat_id": chat_id}, files=files, timeout=30.0

@@ -10,7 +10,11 @@ import app.tools.inventory as inv
 from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput
 
 import app.tools.billing as bill
-from app.schemas.billing_schemas import AddToBillInput, FinalizeBillInput, QuerySalesInput, RemoveFromBillInput, UpdateBillItemInput, ViewDraftBillInput, GenerateInvoiceInput
+from app.schemas.billing_schemas import (
+    AddToBillInput, FinalizeBillInput, QuerySalesInput,
+    RemoveFromBillInput, UpdateBillItemInput, ViewDraftBillInput,
+    GenerateInvoiceInput, GenerateAnalysisInput,
+)
 
 import app.tools.khata as khata
 from app.schemas.khata_schemas import OpenKhataInput, RecordKhataPaymentInput, GetKhataBalanceInput
@@ -35,7 +39,6 @@ class AgentCallback(BaseCallbackHandler):
         content = ""
         if response.generations and response.generations[0]:
             msg = response.generations[0][0]
-            # msg can be AIMessage (has .content) or ChatGeneration (has .text)
             if hasattr(msg, "content"):
                 content = str(msg.content or "")
             elif hasattr(msg, "text"):
@@ -52,22 +55,20 @@ class AgentCallback(BaseCallbackHandler):
     def on_tool_end(self, output, **kwargs):
         log.info(f"[TOOL ←] result={str(output)[:200]}")
 
+
 class StoreAgentOrchestrator:
-    """
-    A Multi-Agent Orchestrator using deepagents create_deep_agent.
-    """
+    """Single flat agent with all store tools — no routing, no subagents."""
+
     def __init__(self, chat_id: int):
         self.chat_id = chat_id
         self.memory = GLOBAL_MEMORY
-        
-        # Tools
-        inventory_tools = [
+
+        all_tools = [
+            # Inventory
             self._wrap(inv.add_product, AddProductInput),
             self._wrap(inv.receive_stock, ReceiveStockInput),
             self._wrap(inv.query_stock, QueryStockInput),
-        ]
-        
-        billing_tools = [
+            # Billing
             self._wrap(bill.add_to_bill, AddToBillInput),
             self._wrap(bill.remove_from_bill, RemoveFromBillInput),
             self._wrap(bill.update_bill_item, UpdateBillItemInput),
@@ -75,9 +76,8 @@ class StoreAgentOrchestrator:
             self._wrap(bill.finalize_bill, FinalizeBillInput),
             self._wrap(bill.query_todays_sales, QuerySalesInput),
             self._wrap(bill.generate_invoice, GenerateInvoiceInput),
-        ]
-        
-        khata_tools = [
+            self._wrap(bill.generate_analysis_deck, GenerateAnalysisInput),
+            # Khata
             self._wrap(khata.open_khata_account, OpenKhataInput),
             self._wrap(khata.record_khata_payment, RecordKhataPaymentInput),
             self._wrap(khata.get_khata_balance, GetKhataBalanceInput),
@@ -89,63 +89,27 @@ class StoreAgentOrchestrator:
         http_client = httpx.Client(
             http2=False,
             headers={"Connection": "close", "Accept-Encoding": "gzip, deflate"},
-            timeout=60.0
+            timeout=60.0,
         )
 
-        def _make_model():
-            return ChatOpenAI(
-                model="deepseek-v4-flash",
-                temperature=0,
-                api_key=os.getenv("DEEPSEEK_API_KEY"),
-                base_url="https://api.deepseek.com/v1",
-                http_client=http_client,
-                callbacks=[AgentCallback()],
-            )
+        model = ChatOpenAI(
+            model="deepseek-v4-flash",
+            temperature=0,
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com/v1",
+            http_client=http_client,
+            callbacks=[AgentCallback()],
+        )
 
-        # Orchestrator routes only
-        routing_model = _make_model()
-        # Subagents share the same model config
-        reasoning_model = _make_model()
+        self.agent = create_deep_agent(
+            model=model,
+            tools=all_tools,
+            system_prompt="""You are a professional supermarket assistant. Be concise and direct — no slang, no filler words.
 
-        # SubAgents — model has thinking=False so tool_choice='required' is accepted
-        # tool_choice is passed via model_kwargs so deepagents sees a plain BaseChatModel
-        inventory_agent = {
-            "name": "inventory_agent",
-            "description": "Manage stock, add products, or check inventory levels.",
-            "system_prompt": "You are the Inventory Manager. Call the appropriate tool immediately. To add a product: call add_product. To check stock: call query_stock. To receive stock: call receive_stock. If required fields are missing, ask the user once.",
-            "tools": inventory_tools,
-            "model": reasoning_model,
-        }
-
-        billing_agent = {
-            "name": "billing_agent",
-            "description": "Create bills, add items to a bill, finalize sales, generate PDF invoices, show daily sales.",
-            "system_prompt": "You are the Billing Agent. Call tools immediately — never type a bill or invoice yourself. To create a bill: call add_to_bill for each item. To show the bill: call view_draft_bill. To finalize: call finalize_bill. For sales: call query_todays_sales. For PDF: call generate_invoice. If the tool returns an error, report it.",
-            "tools": billing_tools,
-            "model": reasoning_model,
-        }
-
-        khata_agent = {
-            "name": "khata_agent",
-            "description": "Manage customer credit, check balances, or record payments.",
-            "system_prompt": "You are the Khata Manager. Call tools immediately. Only ask if a required field (customer name or amount) is missing.",
-            "tools": khata_tools,
-            "model": reasoning_model,
-        }
-
-        # Orchestrator routes to subagents — it MUST delegate, never answer
-        self.orchestrator = create_deep_agent(
-            model=routing_model,
-            system_prompt="""CRITICAL: You are ONLY a router. You CANNOT answer queries — you MUST delegate to a subagent.
-
-inventory_agent → stock, products, shipments
-billing_agent → bills, sales, invoices, PDF
-khata_agent → credit, balances, payments
-
-Delegate now. If off-topic only: 'I can only assist with inventory, billing, and credit ledgers.'""",
-            subagents=[inventory_agent, billing_agent, khata_agent],
+Call tools immediately. Never invent prices, stock, or product names. Never mention internal details like tool names, file paths, or system architecture.
+Bills: add items, then finalize. For PDF invoices or PPT analysis decks, use the available tools.
+If data is unavailable, state what's available and suggest next steps. Be brief — one or two lines when possible.""",
             checkpointer=self.memory,
-            debug=True,
         )
 
     def _wrap(self, func, schema):
@@ -161,14 +125,14 @@ Delegate now. If off-topic only: 'I can only assist with inventory, billing, and
         )
 
     def handle_message(self, message: str) -> str:
-        """Process a message from the user via the Orchestrator with memory."""
+        """Process a message from the user with memory."""
         import time
         log.info(f"chat_id={self.chat_id} | ▶ handle_message: '{message[:120]}'")
         start = time.time()
         config = {"configurable": {"thread_id": str(self.chat_id)}}
-        result = self.orchestrator.invoke(
+        result = self.agent.invoke(
             {"messages": [HumanMessage(content=message)]},
-            config=config
+            config=config,
         )
         elapsed = time.time() - start
         reply = result["messages"][-1].content

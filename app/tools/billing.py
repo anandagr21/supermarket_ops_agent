@@ -2,10 +2,11 @@ from sqlmodel import Session, select
 from app.schemas.billing_schemas import (
     AddToBillInput, FinalizeBillInput, QuerySalesInput,
     RemoveFromBillInput, UpdateBillItemInput, ViewDraftBillInput,
-    GenerateInvoiceInput,
+    GenerateInvoiceInput, GenerateAnalysisInput,
 )
 from app.services.billing_service import BillingService
 from app.services.invoice_service import InvoiceService
+from app.services.analysis_service import AnalysisService
 from app.models import Bill
 from app.logger import setup_logger
 
@@ -90,4 +91,18 @@ def generate_invoice(session: Session, chat_id: int, args: GenerateInvoiceInput)
 
     result = f"Invoice INV-{bill_id:04d} generated as PDF and sent."
     log.info(f"chat_id={chat_id} | generate_invoice → {result}")
+    return result
+
+
+def generate_analysis_deck(session: Session, chat_id: int, args: GenerateAnalysisInput) -> str:
+    """Generate a PowerPoint analysis deck with charts — sales, top items, stock health, GST."""
+    log.info(f"chat_id={chat_id} | generate_analysis_deck")
+    service = AnalysisService(session)
+    path = service.generate(chat_id)
+
+    import app.main as main_module
+    main_module.PENDING_FILES[chat_id] = path
+
+    result = f"Sales analysis deck generated and sent."
+    log.info(f"chat_id={chat_id} | generate_analysis_deck → {result}")
     return result
