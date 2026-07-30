@@ -156,7 +156,7 @@ class StoreAgentOrchestrator:
         preferences_agent = {
             "name": "preferences_agent",
             "description": "Set or view store preferences like default payment method, preferred brands, store name, GST rate. Use set_preference with exact keys.",
-            "system_prompt": "You are the Preferences Manager. For setting preferences use these EXACT keys: 'default_payment' (cash/upi/card/khata), 'default_gst_rate' (5/12/18 as number), 'default_atta' (brand), 'shop_name', 'gstin', 'shop_address'. Call set_preference(key, value) directly — don't ask for confirmation. Call get_preferences to view. /new → new_chat.",
+            "system_prompt": "You are the Preferences Manager. When the owner says 'set my GST to 5%', call set_preference(key='default_gst_rate', value='5%'). For 'always use UPI' → set_preference(key='default_payment', value='upi'). For 'default atta is Aashirvaad' → set_preference(key='default_atta', value='Aashirvaad 5kg'). For 'my shop is X' → set_preference(key='shop_name', value='X'). To view → get_preferences. /new → new_chat. Act immediately — no confirmation.",
             "tools": pref_tools,
         }
 
@@ -166,7 +166,7 @@ class StoreAgentOrchestrator:
             system_prompt=f"""Route to the right department:
 - billing_agent: bills, sales, invoices, PDF, PPT, analysis, reports
 - inventory_agent: stock, products, shipments, stock levels
-- khata_agent: customer khata/credit, increase debt, repay, balance
+- khata_agent: customer khata/credit, increase debt, repay, balance, list customers
 - preferences_agent: store preferences, default payment, brand, shop, /new chat
 
 Delegate. Be concise. Never mention tool names or internals.{prefs_suffix}""",
