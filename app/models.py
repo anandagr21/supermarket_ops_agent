@@ -67,11 +67,11 @@ class Bill(SQLModel, table=True):
     customer_name: Optional[str] = None # optional name on cash/upi bills
     status: str = Field(default="draft") # draft, finalized
     
-    items: List["BillItem"] = Relationship(back_populates="bill")
+    items: List["BillItem"] = Relationship(back_populates="bill", sa_relationship_kwargs={"cascade": "all, delete"})
 
 class BillItem(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    bill_id: int = Field(foreign_key="bill.id")
+    bill_id: int = Field(foreign_key="bill.id", ondelete="CASCADE")
     product_id: int = Field(foreign_key="product.id")
     quantity: float
     unit_price: float # price per unit at the time of sale

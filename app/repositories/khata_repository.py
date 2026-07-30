@@ -11,3 +11,8 @@ class KhataRepository:
         return self.session.exec(
             select(KhataAccount).where(KhataAccount.chat_id == chat_id, KhataAccount.customer_name == customer_name)
         ).first()
+
+    def get_all(self, chat_id: int) -> list[KhataAccount]:
+        return list(self.session.exec(
+            select(KhataAccount).where(KhataAccount.chat_id == chat_id)
+        ).all())

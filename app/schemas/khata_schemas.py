@@ -13,3 +13,6 @@ class GetKhataBalanceInput(BaseModel):
 class AddKhataCreditInput(BaseModel):
     customer_name: str = Field(description="Name of the customer.")
     amount: float = Field(gt=0, description="Amount to add to their credit balance in INR.")
+
+class ListKhataCustomersInput(BaseModel):
+    pass

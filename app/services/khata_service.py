@@ -75,3 +75,10 @@ class KhataService:
         self.session.commit()
 
         return f"Added ₹{amount} to {customer_name}'s credit. New balance: ₹{account.balance}."
+
+    def list_customers(self, chat_id: int) -> str:
+        accounts = self.repo.get_all(chat_id)
+        if not accounts:
+            return "No customer credit accounts have been created yet."
+        lines = [f"{a.customer_name}: ₹{a.balance}" for a in accounts]
+        return "Khata customers:\n" + "\n".join(lines)

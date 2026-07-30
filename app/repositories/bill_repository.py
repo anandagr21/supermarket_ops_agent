@@ -15,9 +15,11 @@ class BillRepository:
         ).all()
         if not drafts:
             return None
-        # Clean up stale duplicates
+        # Clean up stale duplicates — delete items first, then the bill
         if len(drafts) > 1:
             for extra in drafts[1:]:
+                for item in self.get_all_bill_items(extra.id):
+                    self.session.delete(item)
                 self.session.delete(extra)
             self.session.commit()
         return drafts[0]
