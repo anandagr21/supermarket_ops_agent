@@ -40,7 +40,7 @@ class _ToolCallGuardMiddleware(AgentMiddleware[dict, ContextT, ResponseT]):
     """Hard-stop agent after max_tool_calls within a single turn. Prevents loops."""
     name = "ToolCallGuardMiddleware"
 
-    def __init__(self, max_calls: int = 15):
+    def __init__(self, max_calls: int = 20):
         super().__init__()
         self.max_calls = max_calls
 
@@ -52,7 +52,7 @@ class _ToolCallGuardMiddleware(AgentMiddleware[dict, ContextT, ResponseT]):
         tool_count = sum(1 for m in msgs if isinstance(m, ToolMessage))
         if tool_count >= self.max_calls:
             log.warning(f"ToolCallGuard: {tool_count} tool calls, forcing stop")
-            return ModelResponse(result=[AIMessage(content="Safe stop — task was taking too many steps. I'll use what I have so far.")])
+            return ModelResponse(result=[AIMessage(content="I wasn't able to complete that — could you rephrase your request?")])
         return handler(request)
 
 
@@ -155,15 +155,15 @@ class StoreAgentOrchestrator:
 
         billing_agent = {
             "name": "billing_agent",
-            "description": "Create bills, edit bills, finalize sales, show daily sales, generate PDF invoices, generate PPT analysis decks.",
-            "system_prompt": "FLOW: 1) add_to_bill each item ONE AT A TIME 2) view_draft 3) finalize_bill. DO NOT parallelize add_to_bill. Edits: update_bill_item SETS qty, remove_from_bill drops. Apply preferences (default_payment). One call per request — never retry." + prefs_suffix,
+            "description": "Create bills, edit bills, finalize sales (cash/UPI/card/khata), show daily sales, generate PDF invoices and PPT analysis decks. Handle 'sell X to customer' as a normal bill — the customer name is just a reference unless paying via khata.",
+            "system_prompt": "FLOW: 1) add_to_bill each item ONE AT A TIME 2) view_draft 3) finalize_bill with payment mode and customer name if provided. DO NOT parallelize add_to_bill. Customer name on cash/UPI/card is just a label — no khata account needed. Apply preferences (default_payment). One call per request — never retry." + prefs_suffix,
             "tools": billing_tools,
         }
 
         khata_agent = {
             "name": "khata_agent",
-            "description": "Increase customer debt on credit, record repayments, check balances, list all customers.",
-            "system_prompt": "'put on credit'→increase_customer_debt. 'paid'→record_khata_payment. balance→get_khata_balance. 'list customers'→list_khata_customers. One call per request — never retry." + prefs_suffix,
+            "description": "Manage customer credit, record repayments, check balances, list all accounts/customers.",
+            "system_prompt": "'put on credit'→increase_customer_debt. 'paid'→record_khata_payment. balance→get_khata_balance. 'list customers'/'show accounts'/'my accounts'→list_khata_customers. One call per request — never retry." + prefs_suffix,
             "tools": khata_tools,
         }
 
@@ -177,11 +177,11 @@ class StoreAgentOrchestrator:
         self.agent = create_deep_agent(
             model=model,
             tools=[],
-            middleware=[_ToolCallGuardMiddleware(max_calls=15)],
+            middleware=[_ToolCallGuardMiddleware(max_calls=20)],
             system_prompt=f"""Route requests to the right department:
 - billing_agent: bills, sales, invoices, PDF, PPT, analysis, reports
 - inventory_agent: stock, products, shipments, stock levels
-- khata_agent: customer khata/credit, increase debt, repay, balance, list customers
+- khata_agent: customer khata/credit, increase debt, repay, balance, list accounts/customers
 - preferences_agent: store preferences, GST rate, default payment, brand, shop name, /new chat
 
 Delegate immediately. Be concise. Never mention tool names or internals.{prefs_suffix}""",
