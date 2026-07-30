@@ -1,4 +1,4 @@
-from deepagents import create_deep_agent
+from deepagents import create_deep_agent, FilesystemPermission
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import StructuredTool
@@ -26,10 +26,17 @@ from app.logger import setup_logger
 log = setup_logger("agent")
 GLOBAL_MEMORY = MemorySaver()
 
+# Deny ALL filesystem operations globally — our tools talk to a DB, not disk
+DENY_FILESYSTEM = [
+    FilesystemPermission(
+        operations=["read", "write", "delete"],
+        paths=["/**"],
+        mode="deny",
+    ),
+]
+
 
 class AgentCallback(BaseCallbackHandler):
-    """Logs LLM calls and tool invocations for observability."""
-
     def on_llm_start(self, serialized, prompts, **kwargs):
         name = serialized.get("name", serialized.get("id", ["LLM"])[-1]) if serialized else "LLM"
         for p in prompts[:1]:
@@ -44,9 +51,7 @@ class AgentCallback(BaseCallbackHandler):
             elif hasattr(msg, "text"):
                 content = msg.text or ""
         usage = response.llm_output.get("token_usage", {}) if response.llm_output else {}
-        tokens_in = usage.get("prompt_tokens", "?")
-        tokens_out = usage.get("completion_tokens", "?")
-        log.info(f"[LLM ←] tokens_in={tokens_in} tokens_out={tokens_out} | {content[:200]}")
+        log.info(f"[LLM ←] tokens_in={usage.get('prompt_tokens','?')} tokens_out={usage.get('completion_tokens','?')} | {content[:200]}")
 
     def on_tool_start(self, serialized, input_str, **kwargs):
         name = serialized.get("name", "tool")
@@ -57,18 +62,19 @@ class AgentCallback(BaseCallbackHandler):
 
 
 class StoreAgentOrchestrator:
-    """Single flat agent with all store tools — no routing, no subagents."""
+    """Multi-agent orchestrator with filesystem denied via permissions."""
 
     def __init__(self, chat_id: int):
         self.chat_id = chat_id
         self.memory = GLOBAL_MEMORY
 
-        all_tools = [
-            # Inventory
+        inventory_tools = [
             self._wrap(inv.add_product, AddProductInput),
             self._wrap(inv.receive_stock, ReceiveStockInput),
             self._wrap(inv.query_stock, QueryStockInput),
-            # Billing
+        ]
+
+        billing_tools = [
             self._wrap(bill.add_to_bill, AddToBillInput),
             self._wrap(bill.remove_from_bill, RemoveFromBillInput),
             self._wrap(bill.update_bill_item, UpdateBillItemInput),
@@ -77,7 +83,9 @@ class StoreAgentOrchestrator:
             self._wrap(bill.query_todays_sales, QuerySalesInput),
             self._wrap(bill.generate_invoice, GenerateInvoiceInput),
             self._wrap(bill.generate_analysis_deck, GenerateAnalysisInput),
-            # Khata
+        ]
+
+        khata_tools = [
             self._wrap(khata.open_khata_account, OpenKhataInput),
             self._wrap(khata.record_khata_payment, RecordKhataPaymentInput),
             self._wrap(khata.get_khata_balance, GetKhataBalanceInput),
@@ -93,22 +101,44 @@ class StoreAgentOrchestrator:
         )
 
         model = ChatOpenAI(
-            model="deepseek-v4-flash",
+            model="gpt-4o-mini",
             temperature=0,
-            api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url="https://api.deepseek.com/v1",
-            http_client=http_client,
+            api_key=os.getenv("OPENAI_API_KEY"),
             callbacks=[AgentCallback()],
         )
 
+        inventory_agent = {
+            "name": "inventory_agent",
+            "description": "Manage stock, add products, receive shipments, check inventory levels.",
+            "system_prompt": "You are the Inventory Manager. Check stock, add products, receive shipments. Never mention tool names or system details.",
+            "tools": inventory_tools,
+        }
+
+        billing_agent = {
+            "name": "billing_agent",
+            "description": "Create bills, edit bills, finalize sales, show daily sales, generate PDF invoices, generate PPT analysis decks.",
+            "system_prompt": "You are the Billing Cashier. Create bills, finalize sales, generate invoices and analysis decks. Never mention tool names or system details. Be concise.",
+            "tools": billing_tools,
+        }
+
+        khata_agent = {
+            "name": "khata_agent",
+            "description": "Manage customer credit accounts, record payments, check balances.",
+            "system_prompt": "You are the Khata Manager. Track credit, record payments, check balances. Never mention tool names or system details.",
+            "tools": khata_tools,
+        }
+
         self.agent = create_deep_agent(
             model=model,
-            tools=all_tools,
-            system_prompt="""You are a professional supermarket assistant. Be concise and direct — no slang, no filler words.
+            tools=[],
+            system_prompt="""Route requests to the right department:
+- billing_agent: bills, sales, invoices, PDF, PPT, analysis, reports
+- inventory_agent: stock, products, shipments, stock levels
+- khata_agent: customer credit, payments, balances
 
-Call tools immediately. Never invent prices, stock, or product names. Never mention internal details like tool names, file paths, or system architecture.
-Bills: add items, then finalize. For PDF invoices or PPT analysis decks, use the available tools.
-If data is unavailable, state what's available and suggest next steps. Be brief — one or two lines when possible.""",
+Delegate immediately. Be concise. Never mention tool names or system internals.""",
+            subagents=[inventory_agent, billing_agent, khata_agent],
+            permissions=DENY_FILESYSTEM,
             checkpointer=self.memory,
         )
 
@@ -125,7 +155,6 @@ If data is unavailable, state what's available and suggest next steps. Be brief 
         )
 
     def handle_message(self, message: str) -> str:
-        """Process a message from the user with memory."""
         import time
         log.info(f"chat_id={self.chat_id} | ▶ handle_message: '{message[:120]}'")
         start = time.time()
