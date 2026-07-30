@@ -138,7 +138,8 @@ class StoreAgentOrchestrator:
 
         from sqlmodel import Session as Sess2
         from app.services.preferences_service import PreferencesService
-        from app.database import engine as db_engine2
+        from app.database import engine as db_engine2, create_db_and_tables
+        create_db_and_tables()  # ensure tables exist (needed for direct testing)
         with Sess2(db_engine2) as s:
             store_prefs = PreferencesService(s).get_all(chat_id)
         prefs_suffix = ""
@@ -155,7 +156,7 @@ class StoreAgentOrchestrator:
         billing_agent = {
             "name": "billing_agent",
             "description": "Create bills, edit bills, finalize sales, show daily sales, generate PDF invoices, generate PPT analysis decks.",
-            "system_prompt": "FLOW: 1) add_to_bill all items parallel 2) view_draft 3) finalize_bill. Edits: update_bill_item SETS qty, remove_from_bill drops. Apply preferences (default_payment). One call per request — never retry." + prefs_suffix,
+            "system_prompt": "FLOW: 1) add_to_bill each item ONE AT A TIME 2) view_draft 3) finalize_bill. DO NOT parallelize add_to_bill. Edits: update_bill_item SETS qty, remove_from_bill drops. Apply preferences (default_payment). One call per request — never retry." + prefs_suffix,
             "tools": billing_tools,
         }
 
