@@ -2,6 +2,7 @@ import uuid
 from typing import List, Optional
 from datetime import datetime
 from sqlmodel import SQLModel, Field, Relationship
+from sqlalchemy import BigInteger
 
 
 def _uuid() -> str:
@@ -16,14 +17,14 @@ class ProcessedUpdate(SQLModel, table=True):
 # --- Preferences ---
 class OwnerPreference(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    chat_id: int = Field(index=True) # Telegram Chat ID (Isolates stores for different reviewers)
+    chat_id: int = Field(sa_type=BigInteger, index=True) # Telegram Chat ID (Isolates stores for different reviewers)
     key: str
     value: str
 
 # --- Products (Inventory) ---
 class Product(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    chat_id: int = Field(index=True)
+    chat_id: int = Field(sa_type=BigInteger, index=True)
     name: str = Field(index=True) # Removed unique=True globally, should be unique per chat_id (handled in code)
     unit: str # kg, g, litre, ml, packet, dozen, piece
     gst_slab_percent: float # 0, 5, 12, 18
@@ -36,7 +37,7 @@ class Product(SQLModel, table=True):
 # --- Khata (Credit Ledger) ---
 class KhataAccount(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    chat_id: int = Field(index=True)
+    chat_id: int = Field(sa_type=BigInteger, index=True)
     customer_name: str = Field(index=True)
     # Positive balance means the customer owes the store money.
     balance: float = Field(default=0.0)
@@ -57,7 +58,7 @@ class KhataTransaction(SQLModel, table=True):
 class Bill(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(default_factory=_uuid, index=True, unique=True)  # public-facing ID
-    chat_id: int = Field(index=True)
+    chat_id: int = Field(sa_type=BigInteger, index=True)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     total_amount: float = Field(default=0.0)
     total_tax: float = Field(default=0.0)
