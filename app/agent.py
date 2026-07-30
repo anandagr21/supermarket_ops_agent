@@ -119,24 +119,36 @@ class StoreAgentOrchestrator:
             callbacks=[AgentCallback()],
         )
 
+        # Fetch preferences BEFORE building subagents so prompts get injected
+        from sqlmodel import Session as Sess2
+        from app.services.preferences_service import PreferencesService
+        from app.database import engine as db_engine2
+        with Sess2(db_engine2) as s:
+            store_prefs = PreferencesService(s).get_all(chat_id)
+        prefs_suffix = ""
+        if store_prefs:
+            prefs_suffix = "\n\nPreferences: " + ", ".join(
+                f"{k}={v}" for k, v in store_prefs.items()
+            )
+
         inventory_agent = {
             "name": "inventory_agent",
             "description": "Manage stock, add products, receive shipments, check inventory levels.",
-            "system_prompt": "You are the Inventory Manager. Check stock, add products, receive shipments. Never mention tool names or system details.",
+            "system_prompt": "You are the Inventory Manager. Add products, receive shipments, check stock. Apply standing preferences when adding (e.g. default GST). Never mention tool names." + prefs_suffix,
             "tools": inventory_tools,
         }
 
         billing_agent = {
             "name": "billing_agent",
             "description": "Create bills, edit bills, finalize sales, show daily sales, generate PDF invoices, generate PPT analysis decks.",
-            "system_prompt": "You are the Billing Cashier. Create bills, finalize sales, generate invoices and analysis decks. Never mention tool names or system details. Be concise.",
+            "system_prompt": "You are the Billing Cashier. FLOW: 1) add_to_bill ALL items parallel, 2) view_draft_bill, 3) finalize_bill. Edits: update_bill_item SETS qty, remove_from_bill drops. Apply standing preferences (e.g. default_payment). Never create a new bill when draft exists." + prefs_suffix,
             "tools": billing_tools,
         }
 
         khata_agent = {
             "name": "khata_agent",
             "description": "Increase customer debt when they take goods on credit, record payments when they repay, check balances.",
-            "system_prompt": "You are the Khata Manager. For 'put X on credit' → use increase_customer_debt. For 'paid X' → use record_khata_payment. For balance → get_khata_balance. Never mention tool names or system details.",
+            "system_prompt": "You are the Khata Manager. 'put on credit' → increase_customer_debt. 'paid' → record_khata_payment. balance → get_khata_balance. Never mention tool names." + prefs_suffix,
             "tools": khata_tools,
         }
 
@@ -147,28 +159,16 @@ class StoreAgentOrchestrator:
             "tools": pref_tools,
         }
 
-        # Fetch persisted preferences for this store
-        from sqlmodel import Session
-        from app.services.preferences_service import PreferencesService
-        from app.database import engine as db_engine
-        with Session(db_engine) as s:
-            store_prefs = PreferencesService(s).get_all(chat_id)
-        prefs_text = ""
-        if store_prefs:
-            prefs_text = "\n\nStanding preferences (apply these automatically):\n" + "\n".join(
-                f"- {k}: {v}" for k, v in store_prefs.items()
-            )
-
         self.agent = create_deep_agent(
             model=model,
             tools=[],
-            system_prompt=f"""Route requests to the right department:
+            system_prompt=f"""Route to the right department:
 - billing_agent: bills, sales, invoices, PDF, PPT, analysis, reports
 - inventory_agent: stock, products, shipments, stock levels
-- khata_agent: customer khata/credit accounts, increase debt (put on credit), record repayment, check balance
-- preferences_agent: store preferences, default payment, preferred brands, shop name, /new chat
+- khata_agent: customer khata/credit, increase debt, repay, balance
+- preferences_agent: store preferences, default payment, brand, shop, /new chat
 
-Delegate immediately. Be concise. Never mention tool names or system internals.{prefs_text}""",
+Delegate. Be concise. Never mention tool names or internals.{prefs_suffix}""",
             subagents=[inventory_agent, billing_agent, khata_agent, preferences_agent],
             permissions=DENY_FILESYSTEM,
             checkpointer=self.memory,
@@ -177,8 +177,14 @@ Delegate immediately. Be concise. Never mention tool names or system internals.{
     def _wrap(self, func, schema):
         def wrapper(**kwargs):
             from sqlmodel import Session
-            with Session(engine) as session:
-                return func(session, self.chat_id, schema(**kwargs))
+            try:
+                with Session(engine) as session:
+                    return func(session, self.chat_id, schema(**kwargs))
+            except Exception as e:
+                msg = str(e)
+                if "IntegrityError" in msg or "constraint" in msg:
+                    return "Could not complete the operation — some required details were missing. Please provide all product details (name, unit, GST%, cost, MRP) and try again."
+                return f"Operation failed. Please try again with complete details."
         return StructuredTool.from_function(
             func=wrapper,
             name=func.__name__,

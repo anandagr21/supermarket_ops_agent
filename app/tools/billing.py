@@ -35,7 +35,7 @@ def remove_from_bill(session: Session, chat_id: int, args: RemoveFromBillInput) 
     return result
 
 def update_bill_item(session: Session, chat_id: int, args: UpdateBillItemInput) -> str:
-    """Change the quantity of an existing item in the draft bill."""
+    """SET (not add) the quantity of an existing item in the draft bill. E.g. 'make it 4 Maggi' sets qty to 4."""
     log.info(f"chat_id={chat_id} | update_bill_item({args.product_name}, qty={args.quantity})")
     service = get_billing_service(session)
     result = service.update_bill_item(chat_id, args.product_name, args.quantity)
@@ -68,19 +68,20 @@ def query_todays_sales(session: Session, chat_id: int, args: QuerySalesInput) ->
 def generate_invoice(session: Session, chat_id: int, args: GenerateInvoiceInput) -> str:
     """Generate a GST-compliant PDF invoice for a finalized bill and send it via Telegram."""
     bill_id = args.bill_id
+    bill_obj = None
     if bill_id is None:
-        bill = session.exec(
+        bill_obj = session.exec(
             select(Bill)
             .where(Bill.chat_id == chat_id, Bill.status == "finalized")
             .order_by(Bill.timestamp.desc())
         ).first()
-        if not bill:
+        if not bill_obj:
             return "No finalized bill found to generate an invoice."
-        bill_id = bill.id
+        bill_id = bill_obj.id
     else:
-        bill = session.get(Bill, bill_id)
-        if not bill or bill.status != "finalized":
-            return f"Bill #{bill_id} not found or not finalized."
+        bill_obj = session.get(Bill, bill_id)
+        if not bill_obj or bill_obj.status != "finalized":
+            return f"Bill not found or not finalized."
 
     log.info(f"chat_id={chat_id} | generate_invoice(bill_id={bill_id})")
     invoice_service = InvoiceService(session)
@@ -89,7 +90,8 @@ def generate_invoice(session: Session, chat_id: int, args: GenerateInvoiceInput)
     import app.main as main_module
     main_module.PENDING_FILES[chat_id] = path
 
-    result = f"Invoice INV-{bill_id:04d} generated as PDF and sent."
+    tag = bill_obj.uuid[:8]
+    result = f"Invoice {tag} generated as PDF and sent."
     log.info(f"chat_id={chat_id} | generate_invoice → {result}")
     return result
 

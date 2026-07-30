@@ -1,6 +1,11 @@
+import uuid
 from typing import List, Optional
 from datetime import datetime
 from sqlmodel import SQLModel, Field, Relationship
+
+
+def _uuid() -> str:
+    return str(uuid.uuid4())
 
 # --- Idempotency (Telegram retry protection) ---
 class ProcessedUpdate(SQLModel, table=True):
@@ -51,6 +56,7 @@ class KhataTransaction(SQLModel, table=True):
 # --- Billing ---
 class Bill(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(default_factory=_uuid, index=True, unique=True)  # public-facing ID
     chat_id: int = Field(index=True)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     total_amount: float = Field(default=0.0)
@@ -58,6 +64,7 @@ class Bill(SQLModel, table=True):
     total_cgst: float = Field(default=0.0)
     total_sgst: float = Field(default=0.0)
     payment_mode: Optional[str] = None # cash, upi, khata
+    customer_name: Optional[str] = None # optional name on cash/upi bills
     status: str = Field(default="draft") # draft, finalized
     
     items: List["BillItem"] = Relationship(back_populates="bill")

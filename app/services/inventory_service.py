@@ -48,7 +48,7 @@ class InventoryService:
         if effective_mrp < effective_cost:
             return f"Cannot update: resulting MRP (₹{effective_mrp}) would be below cost price (₹{effective_cost})."
             
-        product.stock_quantity += quantity
+        product.stock_quantity = round(product.stock_quantity + quantity, 2)
         if cost_price is not None:
             product.cost_price = cost_price
         if mrp is not None:
@@ -65,7 +65,10 @@ class InventoryService:
                 return f"Product '{name}' not found."
             return f"Stock for {name}: {_fmt_qty(product.stock_quantity, product.unit)} (MRP: ₹{product.mrp})"
         else:
-            low_stock_items = self.repo.get_low_stock(chat_id)
+            all_products = self.repo.get_all(chat_id)
+            if not all_products:
+                return "Inventory is empty. No products have been added yet."
+            low_stock_items = [p for p in all_products if p.stock_quantity <= p.reorder_level]
             if not low_stock_items:
                 return "No items are currently low on stock."
             lines = [f"{p.name}: {_fmt_qty(p.stock_quantity, p.unit)} left" for p in low_stock_items]

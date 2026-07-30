@@ -138,7 +138,7 @@ class BillingService:
                 self.session.rollback()
                 return f"OVERSELL PREVENTED: Cannot sell {item.quantity} of {product.name}. Only {product.stock_quantity} left in stock."
 
-            product.stock_quantity -= item.quantity
+            product.stock_quantity = round(product.stock_quantity - item.quantity, 2)
 
             # Tax math: MRP is tax-inclusive, so back-calculate base price.
             # CGST and SGST are computed independently from the base —
@@ -170,8 +170,11 @@ class BillingService:
         bill.total_sgst = total_sgst
         bill.payment_mode = payment_mode
         bill.status = "finalized"
+        # Store customer name on the bill for cash/UPI/card as a reference
+        if khata_customer_name and payment_mode != "khata":
+            bill.customer_name = khata_customer_name
         self.session.add(bill)
-        
+
         # Khata Logic
         if payment_mode == "khata":
             if not khata_customer_name:
@@ -189,7 +192,7 @@ class BillingService:
                 account_id=account.id,
                 amount=bill.total_amount,
                 transaction_type="purchase_on_credit",
-                reference=f"Bill #{bill.id}"
+                reference=f"Bill {bill.uuid[:8]}"
             )
             self.session.add(account)
             self.session.add(txn)

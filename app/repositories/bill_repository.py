@@ -8,9 +8,19 @@ class BillRepository:
         self.session = session
         
     def get_draft_bill(self, chat_id: int) -> Optional[Bill]:
-        return self.session.exec(
+        # Return the most recent draft (in case parallel tool calls created multiple)
+        drafts = self.session.exec(
             select(Bill).where(Bill.chat_id == chat_id, Bill.status == "draft")
-        ).first()
+            .order_by(Bill.id.desc())
+        ).all()
+        if not drafts:
+            return None
+        # Clean up stale duplicates
+        if len(drafts) > 1:
+            for extra in drafts[1:]:
+                self.session.delete(extra)
+            self.session.commit()
+        return drafts[0]
         
     def get_bill_item(self, bill_id: int, product_id: int) -> Optional[BillItem]:
         return self.session.exec(

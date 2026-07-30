@@ -1,18 +1,30 @@
 import os
 from fpdf import FPDF
 from sqlmodel import Session, select
-from app.models import Bill, BillItem, Product
+from app.models import Bill, BillItem, Product, OwnerPreference
 
 
 class InvoiceService:
     """Generates GST-compliant PDF invoices from finalized bills."""
 
-    SHOP_NAME = "AnandMart"
-    SHOP_ADDRESS = "YourLocalKirana, Mumbai 400001"
-    GSTIN = "27ABCDE1234F1Z5"
-
     def __init__(self, session: Session):
         self.session = session
+
+    @staticmethod
+    def _branding(chat_id: int) -> tuple[str, str, str]:
+        """Read shop_name, shop_address, gstin from preferences. Falls back to defaults."""
+        from app.database import engine as db_engine
+        from sqlmodel import Session as S
+        with S(db_engine) as s:
+            rows = s.exec(
+                select(OwnerPreference).where(OwnerPreference.chat_id == chat_id)
+            ).all()
+            prefs = {r.key: r.value for r in rows}
+        return (
+            prefs.get("shop_name", "AnandMart"),
+            prefs.get("shop_address", "YourLocalKirana, Mumbai 400001"),
+            prefs.get("gstin", "27ABCDE1234F1Z5"),
+        )
 
     def generate(self, bill_id: int) -> str:
         bill = self.session.get(Bill, bill_id)
@@ -29,10 +41,11 @@ class InvoiceService:
         w = 190  # usable width in mm (A4 = 210mm minus 10mm margins)
 
         # ── Header ──
+        shop_name, shop_address, gstin = self._branding(bill.chat_id)
         pdf.set_font("Helvetica", "B", 16)
-        pdf.cell(w, 8, self.SHOP_NAME, new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(w, 8, shop_name, new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", "", 9)
-        pdf.cell(w, 5, f"GSTIN: {self.GSTIN}  |  {self.SHOP_ADDRESS}", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(w, 5, f"GSTIN: {gstin}  |  {shop_address}", new_x="LMARGIN", new_y="NEXT")
         pdf.line(10, pdf.get_y() + 2, 200, pdf.get_y() + 2)
         pdf.ln(5)
 
@@ -43,7 +56,7 @@ class InvoiceService:
         pdf.set_font("Helvetica", "", 9)
         ts = bill.timestamp.strftime("%d-%b-%Y %I:%M %p") if bill.timestamp else "-"
         info_cols = [
-            f"Bill #: INV-{bill.id:04d}          Date: {ts}",
+            f"Bill #: {bill.uuid[:8]}          Date: {ts}",
             f"Payment: {bill.payment_mode or '-'}",
         ]
         for line in info_cols:
@@ -107,6 +120,6 @@ class InvoiceService:
         # ── Save ──
         out_dir = "generated"
         os.makedirs(out_dir, exist_ok=True)
-        path = os.path.join(out_dir, f"invoice_INV-{bill.id:04d}.pdf")
+        path = os.path.join(out_dir, f"invoice_{bill.uuid[:8]}.pdf")
         pdf.output(path)
         return path

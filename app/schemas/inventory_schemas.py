@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 class AddProductInput(BaseModel):
     name: str = Field(description="Name of the product/SKU.")
     unit: Literal["kg", "g", "litre", "ml", "packet", "dozen", "piece"] = Field(description="Unit of measurement.")
-    gst_slab_percent: Optional[float] = Field(default=None, description="GST percentage (e.g. 0, 5, 12, 18).")
+    gst_slab_percent: Optional[float] = Field(default=0.0, description="GST percentage (e.g. 0, 5, 12, 18). Defaults to 0%.")
     cost_price: Optional[float] = Field(default=None, gt=0, description="Cost price in INR.")
     mrp: Optional[float] = Field(default=None, gt=0, description="Maximum Retail Price (Sell price) in INR.")
     hsn_code: Optional[str] = Field(default=None, description="Optional HSN code for GST billing.")
