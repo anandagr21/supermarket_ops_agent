@@ -21,6 +21,10 @@ class QueryStockInput(BaseModel):
 class ListProductsInput(BaseModel):
     pass
 
+class SetReorderLevelInput(BaseModel):
+    name: str = Field(description="Product name.")
+    reorder_level: float = Field(ge=0, description="Minimum stock level before low-stock warning.")
+
 class UpdateProductInput(BaseModel):
     name: str = Field(description="Product name to update.")
     cost_price: Optional[float] = Field(default=None, gt=0, description="New cost price.")

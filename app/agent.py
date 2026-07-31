@@ -8,7 +8,7 @@ from sqlmodel import Session
 from app.database import engine
 
 import app.tools.inventory as inv
-from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput, ListProductsInput, UpdateProductInput
+from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput, ListProductsInput, UpdateProductInput, SetReorderLevelInput
 
 import app.tools.billing as bill
 from app.schemas.billing_schemas import (
@@ -102,6 +102,7 @@ class StoreAgentOrchestrator:
             self._wrap(inv.receive_stock, ReceiveStockInput),
             self._wrap(inv.query_stock, QueryStockInput),
             self._wrap(inv.list_products, ListProductsInput),
+            self._wrap(inv.set_reorder_level, SetReorderLevelInput),
         ]
 
         billing_tools = [
@@ -167,7 +168,7 @@ class StoreAgentOrchestrator:
 
         inventory_agent = {
             "name": "inventory_agent",
-            "description": "Manage stock, add products, receive shipments, check inventory levels.",
+            "description": "Manage stock, add products, receive shipments, check inventory levels, set reorder thresholds.",
             "system_prompt": (
                 "PARSING RULE: '5 packets 10kg aashirwad atta' → product_name='aashirwad atta 10kg', unit='packet', quantity=5.\n"
                 "Weight (10kg/5kg) in the name is PART OF THE SKU. unit = container type (packet/piece/kg/litre).\n"
@@ -213,7 +214,7 @@ class StoreAgentOrchestrator:
         preferences_agent = {
             "name": "preferences_agent",
             "description": "Set or view store preferences: GST rate, default payment method, preferred brands, shop name, GSTIN, address.",
-            "system_prompt": "Call set_preference immediately with: GST/tax→key='default_gst_rate', payment/UPI/cash→key='default_payment', atta/brand→key='default_atta', shop→key='shop_name', gstin→key='gstin', address→key='shop_address'. View→get_preferences. /new→new_chat. One call per request — never retry.",
+            "system_prompt": "Call set_preference immediately with: GST/tax→key='default_gst_rate', payment/UPI/cash→key='default_payment', atta/brand→key='default_atta', shop→key='shop_name', gstin→key='gstin', address→key='shop_address', 'set reorder level to X'→key='low_stock_threshold'. View→get_preferences. /new→new_chat. One call per request — never retry.",
             "tools": pref_tools,
         }
 
@@ -221,7 +222,7 @@ class StoreAgentOrchestrator:
             model=model,
             tools=[],
             middleware=[_ToolCallGuardMiddleware(max_calls=20)],
-            system_prompt=f"""You are a kirana store assistant. Talk to the owner in plain language — like a shop helper would.
+            system_prompt=f"""You are a professional supermarket assistant. Speak clearly and concisely — no slang, no filler, no 'bhai' or casual language.
 
 NEVER expose to the user: tool names, subagent names, file paths, system architecture, or internal implementation details.
 NEVER say 'I'll route this to billing_agent' or 'the khata system is separate from inventory' or 'I called query_stock'.
@@ -229,9 +230,9 @@ Just present results clearly — the owner doesn't know or care about the backen
 
 Route to the correct department:
 - billing_agent: bills, sales, finalize, payment, invoices, PDF, PPT, analysis, reports. ALSO: khata with items = billing (it's a bill paid via khata).
-- inventory_agent: add product, receive stock, check stock, list inventory, verify stock update, inventory status
+- inventory_agent: add product, receive stock, check stock, list inventory, set reorder level, verify stock update, inventory status
 - khata_agent: standalone credit/debt only (no product items). Balance, repay, list accounts, open account, put money on credit. Never for itemized sales.
-- preferences_agent: store preferences, GST rate, default payment, brand, shop name, /new chat
+- preferences_agent: store preferences, GST rate, default payment, brand, shop name, /new chat, low stock threshold, reorder default
 
 CRITICAL: When the user's message is a short reply ('Yes', 'proceed', '500 12%', 'cash') to a previous clarification,
 ALWAYS include the full context in the task. Never delegate a bare 'Yes' or short number without context.

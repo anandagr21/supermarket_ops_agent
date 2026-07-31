@@ -1,5 +1,5 @@
 from sqlmodel import Session
-from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput, ListProductsInput, UpdateProductInput
+from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput, ListProductsInput, UpdateProductInput, SetReorderLevelInput
 from app.repositories.product_repository import ProductRepository
 from app.services.inventory_service import InventoryService
 from app.logger import setup_logger
@@ -54,4 +54,12 @@ def list_products(session: Session, chat_id: int, args: ListProductsInput) -> st
     service = get_inventory_service(session)
     result = service.list_products(chat_id)
     log.info(f"chat_id={chat_id} | list_products → {result[:120]}")
+    return result
+
+def set_reorder_level(session: Session, chat_id: int, args: SetReorderLevelInput) -> str:
+    """Set the reorder threshold for a product. Below this, it appears as low stock."""
+    log.info(f"chat_id={chat_id} | set_reorder_level({args.name}, threshold={args.reorder_level})")
+    service = get_inventory_service(session)
+    result = service.set_reorder_level(chat_id, args.name, args.reorder_level)
+    log.info(f"chat_id={chat_id} | set_reorder_level → {result}")
     return result
