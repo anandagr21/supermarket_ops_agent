@@ -19,7 +19,15 @@ class InventoryService:
         
     def add_product(self, chat_id: int, name: str, unit: str, gst_slab_percent: float, cost_price: float, mrp: float, hsn_code: Optional[str] = None) -> str:
         name = name.lower().strip()
-        if mrp is not None and cost_price is not None and mrp < cost_price:
+        # GST defaults to 0% if not specified
+        if gst_slab_percent is None:
+            gst_slab_percent = 0.0
+        # If only MRP is given, cost = MRP; if only cost, MRP = cost
+        if cost_price is None and mrp is not None:
+            cost_price = mrp
+        if mrp is None and cost_price is not None:
+            mrp = cost_price
+        if cost_price is not None and mrp is not None and mrp < cost_price:
             return f"Cannot add product: MRP (₹{mrp}) is below cost price (₹{cost_price})."
         if self.repo.get_by_name(chat_id, name):
             return f"Product '{name}' already exists."
@@ -63,7 +71,7 @@ class InventoryService:
             product = self.repo.get_by_name(chat_id, name)
             if not product:
                 return f"Product '{name}' not found."
-            return f"Stock for {name}: {_fmt_qty(product.stock_quantity, product.unit)} (MRP: ₹{product.mrp})"
+            return f"Stock for {name}: {_fmt_qty(product.stock_quantity, product.unit)} (MRP: ₹{product.mrp}, GST: {product.gst_slab_percent}%)"
         else:
             all_products = self.repo.get_all(chat_id)
             if not all_products:
