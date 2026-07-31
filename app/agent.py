@@ -149,7 +149,7 @@ class StoreAgentOrchestrator:
         inventory_agent = {
             "name": "inventory_agent",
             "description": "Manage stock, add products, receive shipments, check inventory levels.",
-            "system_prompt": "Add products, receive shipments, check stock, list inventory. One call per request — never retry. Apply preferences when present." + prefs_suffix,
+            "system_prompt": "Add products, receive shipments, check stock, list inventory. When adding a product, you NEED unit, cost_price, mrp, and gst_slab_percent. If ANY of these are missing, ASK the user rather than guessing. Once you have all fields, call add_product ONCE. Apply preferences when present." + prefs_suffix,
             "tools": inventory_tools,
         }
 
@@ -193,6 +193,36 @@ Delegate immediately. Be concise. Never mention tool names or internals.{prefs_s
     def _wrap(self, func, schema):
         def wrapper(**kwargs):
             from sqlmodel import Session
+            import json
+
+            # Minimal validator: only for tools with financial numbers
+            financial_keys = {"cost_price", "mrp", "gst_slab_percent", "amount"}
+            args_with_numbers = {k: v for k, v in kwargs.items() if k in financial_keys and v is not None}
+            if args_with_numbers:
+                # Check if user mentioned these numbers
+                config = {"configurable": {"thread_id": str(self.chat_id)}}
+                try:
+                    state = self.memory.get_tuple(config)
+                    if state and hasattr(state, "values") and isinstance(state.values, dict):
+                        msgs = state.values.get("messages", [])
+                        user_text = " ".join(
+                            m.content for m in msgs
+                            if getattr(m, "type", "") == "human"
+                        )[-500:]
+                        if user_text:
+                            import os as _os
+                            valid_model = ChatOpenAI(
+                                model="gpt-4o-mini", temperature=0, max_tokens=30,
+                                api_key=_os.getenv("OPENAI_API_KEY"),
+                            )
+                            from langchain_core.messages import SystemMessage
+                            prompt = f"User message: {user_text[-300:]}\n\nTool: {func.__name__}\nArgs: {json.dumps(args_with_numbers)}\n\nReply ONLY 'OK' if the user explicitly said these numbers. Reply 'REJECT' if the model invented them."
+                            result = valid_model.invoke([SystemMessage(content=prompt)])
+                            if "REJECT" in result.content.upper():
+                                return "Please provide the price, cost, and GST details for this product."
+                except Exception:
+                    pass  # if validation fails, allow the call
+
             try:
                 with Session(engine) as session:
                     return func(session, self.chat_id, schema(**kwargs))

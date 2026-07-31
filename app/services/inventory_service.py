@@ -22,12 +22,15 @@ class InventoryService:
         # GST defaults to 0% if not specified
         if gst_slab_percent is None:
             gst_slab_percent = 0.0
+        # If neither cost nor MRP is given, refuse — the model should ask the user
+        if cost_price is None and mrp is None:
+            return "Cannot add product: at least one of cost_price or MRP is required."
         # If only MRP is given, cost = MRP; if only cost, MRP = cost
-        if cost_price is None and mrp is not None:
+        if cost_price is None:
             cost_price = mrp
-        if mrp is None and cost_price is not None:
+        if mrp is None:
             mrp = cost_price
-        if cost_price is not None and mrp is not None and mrp < cost_price:
+        if mrp < cost_price:
             return f"Cannot add product: MRP (₹{mrp}) is below cost price (₹{cost_price})."
         if self.repo.get_by_name(chat_id, name):
             return f"Product '{name}' already exists."
