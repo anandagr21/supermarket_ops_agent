@@ -15,16 +15,24 @@ class BillingService:
     def add_to_bill(self, chat_id: int, product_name: str, quantity: float) -> str:
         product_name = product_name.lower().strip()
         product = self.product_repo.get_by_name(chat_id, product_name)
-        
+
         if not product:
             return f"Product '{product_name}' not found in inventory."
-            
+
         bill = self.bill_repo.get_or_create_draft_bill(chat_id)
-            
+
         bill_item = self.bill_repo.get_bill_item(bill.id, product.id)
-        
+
         if bill_item:
-            bill_item.quantity += quantity
+            # SET quantity, not accumulate — prevents double-billing when the agent
+            # re-calls add_to_bill on a follow-up turn (e.g. after asking for payment mode)
+            old_qty = bill_item.quantity
+            bill_item.quantity = quantity
+            self.session.add(bill_item)
+            self.session.commit()
+            if old_qty != quantity:
+                return f"Updated {product_name} quantity to {quantity} {product.unit} (was {old_qty})."
+            return f"{product_name} already in bill: {quantity} {product.unit}."
         else:
             bill_item = BillItem(
                 bill_id=bill.id,
@@ -34,7 +42,7 @@ class BillingService:
                 gst_amount=0.0,
                 total_price=0.0
             )
-        
+
         self.session.add(bill_item)
         self.session.commit()
         return f"Added {quantity} {product.unit} of {product_name} to the bill."

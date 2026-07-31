@@ -138,11 +138,23 @@ class StoreAgentOrchestrator:
             timeout=60.0,
         )
 
+        # model = ChatOpenAI(
+        #     model="gpt-4o-mini",
+        #     temperature=0,
+        #     api_key=os.getenv("OPENAI_API_KEY"),
+        #     callbacks=[AgentCallback()],
+        # )
+
         model = ChatOpenAI(
-            model="gpt-4o-mini",
+            model="deepseek-v4-flash",           # or "deepseek-reasoner" for Pro/R1
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            base_url="https://api.deepseek.com/v1",
             temperature=0,
-            api_key=os.getenv("OPENAI_API_KEY"),
             callbacks=[AgentCallback()],
+            http_client=http_client,         # reuse existing httpx client
+            model_kwargs={
+                "extra_body": {"thinking": {"type": "disabled"}}  # for thinking models
+            },
         )
 
         from sqlmodel import Session as Sess2
@@ -178,14 +190,16 @@ class StoreAgentOrchestrator:
             "name": "billing_agent",
             "description": "Create bills, edit bills, finalize sales (cash/UPI/card/khata), show daily sales, generate PDF invoices and PPT analysis decks.",
             "system_prompt": (
-                "FLOW: 1) add_to_bill EACH item ONE AT A TIME 2) call view_draft_bill ONCE 3) call finalize_bill with payment_mode.\n"
+                "TWO MODES — read carefully:\n"
+                "MODE A (Adding items): User requests new bill items → call add_to_bill for each, then view_draft_bill, then STOP.\n"
+                "MODE B (Finalizing): User confirms payment ('cash', 'UPI', 'yes finalize') → call view_draft_bill ONCE then finalize_bill. DO NOT call add_to_bill.\n"
+                "NEVER mix modes. If user only says a payment method, go straight to MODE B.\n\n"
                 "CRITICAL RULES:\n"
                 "- You have ZERO knowledge of products or prices. Use ONLY what tools return.\n"
                 "- Use the EXACT product name the user said. NEVER try a similar or variant name.\n"
-                "- If add_to_bill returns 'not found' or any error: tell the user, skip that item, continue with the rest.\n"
+                "- If add_to_bill returns 'not found' or any error: tell the user, skip that item.\n"
                 "- NEVER show a bill line that add_to_bill did not confirm.\n"
-                "- Customer name on cash/UPI/card is just a label — no khata account needed.\n"
-                "- Finalize only when user says 'done', 'finalize', 'pay', or after all items are attempted."
+                "- Customer name on cash/UPI/card is just a label — no khata account needed."
                 + prefs_suffix
             ),
             "tools": billing_tools,
