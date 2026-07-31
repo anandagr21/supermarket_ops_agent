@@ -80,6 +80,26 @@ class InventoryService:
             lines = [f"{p.name}: {_fmt_qty(p.stock_quantity, p.unit)} left" for p in low_stock_items]
             return "Low stock items:\n" + "\n".join(lines)
 
+    def update_product(self, chat_id: int, name: str, cost_price: Optional[float] = None, mrp: Optional[float] = None, gst_slab_percent: Optional[float] = None) -> str:
+        """Update product price/GST without touching stock."""
+        name = name.lower().strip()
+        product = self.repo.get_by_name(chat_id, name)
+        if not product:
+            return f"Product '{name}' not found."
+        if mrp is not None:
+            effective_cost = cost_price if cost_price is not None else product.cost_price
+            if mrp < effective_cost:
+                return f"Cannot update: MRP (₹{mrp}) would be below cost price (₹{effective_cost})."
+            product.mrp = mrp
+        if cost_price is not None:
+            if product.mrp < cost_price:
+                return f"Cannot update: new cost (₹{cost_price}) exceeds MRP (₹{product.mrp})."
+            product.cost_price = cost_price
+        if gst_slab_percent is not None:
+            product.gst_slab_percent = gst_slab_percent
+        self.repo.save(product)
+        return f"Updated {name}: MRP ₹{product.mrp}, cost ₹{product.cost_price}, GST {product.gst_slab_percent}%."
+
     def list_products(self, chat_id: int) -> str:
         products = self.repo.get_all(chat_id)
         if not products:
