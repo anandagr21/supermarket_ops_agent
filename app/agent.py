@@ -37,7 +37,7 @@ DENY_FILESYSTEM = [
 
 
 class _ToolCallGuardMiddleware(AgentMiddleware[dict, ContextT, ResponseT]):
-    """Hard-stop agent after max_tool_calls within a single turn. Prevents loops."""
+    """Hard-stop agent after max_tool_calls within a single CURRENT turn. Prevents loops."""
     name = "ToolCallGuardMiddleware"
 
     def __init__(self, max_calls: int = 20):
@@ -49,9 +49,17 @@ class _ToolCallGuardMiddleware(AgentMiddleware[dict, ContextT, ResponseT]):
         handler,
     ) -> ModelResponse[ResponseT]:
         msgs = request.messages if hasattr(request, 'messages') else []
-        tool_count = sum(1 for m in msgs if isinstance(m, ToolMessage))
+        # Count tool calls since the last HumanMessage only (current turn).
+        # Counting all history causes false-positives when a previous failed turn
+        # left many ToolMessages in the MemorySaver checkpoint.
+        tool_count = 0
+        for m in reversed(msgs):
+            if isinstance(m, ToolMessage):
+                tool_count += 1
+            elif getattr(m, 'type', None) == 'human':
+                break  # stop at the start of the current turn
         if tool_count >= self.max_calls:
-            log.warning(f"ToolCallGuard: {tool_count} tool calls, forcing stop")
+            log.warning(f"ToolCallGuard: {tool_count} tool calls in current turn, forcing stop")
             return ModelResponse(result=[AIMessage(content="I wasn't able to complete that — could you rephrase your request?")])
         return handler(request)
 
@@ -152,13 +160,15 @@ class StoreAgentOrchestrator:
             "description": "Manage stock, add products, receive shipments, check inventory levels.",
             "system_prompt": (
                 "PARSING RULE: '5 packets 10kg aashirwad atta' → product_name='aashirwad atta 10kg', unit='packet', quantity=5.\n"
-                "Weight in the name (10kg/5kg) is PART OF THE SKU, not the unit. unit=container type (packet/piece/kg/litre).\n"
-                "'atta 5kg' and 'atta 10kg' are DIFFERENT products.\n\n"
-                "TO ADD A NEW PRODUCT — required fields: name, unit, mrp, gst_slab_percent.\n"
-                "NEVER ask for cost_price — it is always optional and defaults to MRP automatically.\n"
-                "If mrp or gst_slab_percent are missing, ask for BOTH in ONE message. Never ask one at a time.\n"
-                "Once you have name + unit + mrp + gst_slab_percent, call add_product IMMEDIATELY without re-confirming.\n\n"
-                "RESTOCK: use receive_stock. CHECK STOCK: use query_stock."
+                "Weight (10kg/5kg) in the name is PART OF THE SKU. unit = container type (packet/piece/kg/litre).\n"
+                "'atta 5kg' ≠ 'atta 10kg'. Different weights = different products.\n\n"
+                "DECISION FLOW when user says 'add N packets/kg of [product]':\n"
+                "  STEP 1: Call query_stock(name=product_name) to check if it exists.\n"
+                "  STEP 2a: If product EXISTS → call receive_stock(product_name, quantity) and STOP.\n"
+                "  STEP 2b: If product NOT FOUND → ask for mrp and gst_slab_percent (BOTH in one message).\n"
+                "  STEP 3 (only after getting mrp+gst): call add_product(...) then call receive_stock(product_name, quantity) for the initial stock.\n"
+                "NEVER ask for cost_price — it is always optional.\n"
+                "CHECK STOCK: use query_stock or list_products."
                 + prefs_suffix
             ),
             "tools": inventory_tools,
@@ -166,8 +176,18 @@ class StoreAgentOrchestrator:
 
         billing_agent = {
             "name": "billing_agent",
-            "description": "Create bills, edit bills, finalize sales (cash/UPI/card/khata), show daily sales, generate PDF invoices and PPT analysis decks. Handle 'sell X to customer' as a normal bill — the customer name is just a reference unless paying via khata.",
-            "system_prompt": "FLOW: 1) add_to_bill each item ONE AT A TIME 2) view_draft 3) finalize_bill with payment mode and customer name if provided. DO NOT parallelize add_to_bill. Customer name on cash/UPI/card is just a label — no khata account needed. Apply preferences (default_payment). One call per request — never retry." + prefs_suffix,
+            "description": "Create bills, edit bills, finalize sales (cash/UPI/card/khata), show daily sales, generate PDF invoices and PPT analysis decks.",
+            "system_prompt": (
+                "FLOW: 1) add_to_bill EACH item ONE AT A TIME 2) call view_draft_bill ONCE 3) call finalize_bill with payment_mode.\n"
+                "CRITICAL RULES:\n"
+                "- You have ZERO knowledge of products or prices. Use ONLY what tools return.\n"
+                "- Use the EXACT product name the user said. NEVER try a similar or variant name.\n"
+                "- If add_to_bill returns 'not found' or any error: tell the user, skip that item, continue with the rest.\n"
+                "- NEVER show a bill line that add_to_bill did not confirm.\n"
+                "- Customer name on cash/UPI/card is just a label — no khata account needed.\n"
+                "- Finalize only when user says 'done', 'finalize', 'pay', or after all items are attempted."
+                + prefs_suffix
+            ),
             "tools": billing_tools,
         }
 
@@ -263,7 +283,7 @@ Never delegate a bare 'Yes' or short number without context. Be concise in all o
             _THREAD_COUNTERS[self.chat_id] = _THREAD_COUNTERS.get(self.chat_id, 0) + 1
 
         thread_id = f"{self.chat_id}_v{_THREAD_COUNTERS.get(self.chat_id, 0)}"
-        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 25}
+        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
         result = self.agent.invoke(
             {"messages": [HumanMessage(content=message)]},
             config=config,
