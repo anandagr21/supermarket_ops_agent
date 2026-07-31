@@ -205,8 +205,8 @@ class StoreAgentOrchestrator:
 
         khata_agent = {
             "name": "khata_agent",
-            "description": "Manage customer credit, record repayments, check balances, list all accounts/customers.",
-            "system_prompt": "'put on credit'→increase_customer_debt. 'paid'→record_khata_payment. balance→get_khata_balance. 'list customers'/'show accounts'/'my accounts'→list_khata_customers. One call per request — never retry." + prefs_suffix,
+            "description": "Manage customer credit, record repayments, check balances, list all accounts/customers. For itemized credit sales with specific products, tell the user to use billing instead.",
+            "system_prompt": "CRITICAL: Never expose internal system details to the user. Never say 'the khata system is separate from inventory', 'I called tool X', or 'I cannot confirm stock'. If asked about inventory/stock, just say 'Please check with inventory — I only handle credit balances.' Only use increase_customer_debt for 'put 500 on Ramesh credit.' 'paid'→record_khata_payment. balance→get_khata_balance. 'list customers'→list_khata_customers. One call per request — never retry." + prefs_suffix,
             "tools": khata_tools,
         }
 
@@ -221,20 +221,24 @@ class StoreAgentOrchestrator:
             model=model,
             tools=[],
             middleware=[_ToolCallGuardMiddleware(max_calls=20)],
-            system_prompt=f"""You are a smart routing assistant for a supermarket. Route to the correct department:
-- billing_agent: bills, sales, finalize, payment, invoices, PDF, PPT, analysis, reports
-- inventory_agent: add product, receive stock, check stock, list inventory
-- khata_agent: customer credit, khata, debt, repayment, balance, list customers
+            system_prompt=f"""You are a kirana store assistant. Talk to the owner in plain language — like a shop helper would.
+
+NEVER expose to the user: tool names, subagent names, file paths, system architecture, or internal implementation details.
+NEVER say 'I'll route this to billing_agent' or 'the khata system is separate from inventory' or 'I called query_stock'.
+Just present results clearly — the owner doesn't know or care about the backend.
+
+Route to the correct department:
+- billing_agent: bills, sales, finalize, payment, invoices, PDF, PPT, analysis, reports. ALSO: khata with items = billing (it's a bill paid via khata).
+- inventory_agent: add product, receive stock, check stock, list inventory, verify stock update, inventory status
+- khata_agent: standalone credit/debt only (no product items). Balance, repay, list accounts, open account, put money on credit. Never for itemized sales.
 - preferences_agent: store preferences, GST rate, default payment, brand, shop name, /new chat
 
 CRITICAL: When the user's message is a short reply ('Yes', 'proceed', '500 12%', 'cash') to a previous clarification,
-ALWAYS include the full context in the task. For example:
-  User originally: 'Add 5 packets aashirwad atta 10kg'
-  Agent asked: 'Need MRP and GST'
-  User replies: '500, 12%'
-  → Delegate to inventory_agent: 'Add new product: name=aashirwad atta 10kg, unit=packet, quantity=5, mrp=500, gst=12%'
+ALWAYS include the full context in the task. Never delegate a bare 'Yes' or short number without context.
 
-Never delegate a bare 'Yes' or short number without context. Be concise in all other replies.{prefs_suffix}""",
+ROUTING RULE: 'Create khata for X with items A, B' → billing_agent (this is a bill paid via khata). Only route to khata_agent for balance checks, repayments, or standalone credit with no product items.
+'Is inventory updated?' → inventory_agent (verify stock). 'Check stock for X' → inventory_agent.
+Be concise.{prefs_suffix}""",
             subagents=[inventory_agent, billing_agent, khata_agent, preferences_agent],
             permissions=DENY_FILESYSTEM,
             checkpointer=self.memory,
