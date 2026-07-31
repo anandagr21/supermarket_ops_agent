@@ -149,8 +149,18 @@ class StoreAgentOrchestrator:
 
         inventory_agent = {
             "name": "inventory_agent",
-            "description": "Manage stock, add/update products, receive shipments, check inventory levels.",
-            "system_prompt": "Keep the FULL product name the user gives — including the weight (e.g. name='Aashirvaad Atta 5kg', not 'Aashirvaad Atta'). 'Aashirvaad Atta 5kg' and 'Aashirvaad Atta 10kg' are different SKUs. New SKU → add_product. Restock existing SKU → receive_stock. Update price/GST → update_product. Check → query_stock or list_products. When adding, you NEED unit and mrp — ASK if missing." + prefs_suffix,
+            "description": "Manage stock, add products, receive shipments, check inventory levels.",
+            "system_prompt": (
+                "PARSING RULE: '5 packets 10kg aashirwad atta' → product_name='aashirwad atta 10kg', unit='packet', quantity=5.\n"
+                "Weight in the name (10kg/5kg) is PART OF THE SKU, not the unit. unit=container type (packet/piece/kg/litre).\n"
+                "'atta 5kg' and 'atta 10kg' are DIFFERENT products.\n\n"
+                "TO ADD A NEW PRODUCT — required fields: name, unit, mrp, gst_slab_percent.\n"
+                "NEVER ask for cost_price — it is always optional and defaults to MRP automatically.\n"
+                "If mrp or gst_slab_percent are missing, ask for BOTH in ONE message. Never ask one at a time.\n"
+                "Once you have name + unit + mrp + gst_slab_percent, call add_product IMMEDIATELY without re-confirming.\n\n"
+                "RESTOCK: use receive_stock. CHECK STOCK: use query_stock."
+                + prefs_suffix
+            ),
             "tools": inventory_tools,
         }
 
@@ -179,13 +189,20 @@ class StoreAgentOrchestrator:
             model=model,
             tools=[],
             middleware=[_ToolCallGuardMiddleware(max_calls=20)],
-            system_prompt=f"""Route requests to the right department:
-- billing_agent: bills, sales, invoices, PDF, PPT, analysis, reports
-- inventory_agent: stock, products, shipments, stock levels
-- khata_agent: customer khata/credit, increase debt, repay, balance, list accounts/customers
+            system_prompt=f"""You are a smart routing assistant for a supermarket. Route to the correct department:
+- billing_agent: bills, sales, finalize, payment, invoices, PDF, PPT, analysis, reports
+- inventory_agent: add product, receive stock, check stock, list inventory
+- khata_agent: customer credit, khata, debt, repayment, balance, list customers
 - preferences_agent: store preferences, GST rate, default payment, brand, shop name, /new chat
 
-Delegate immediately. Be concise. Never mention tool names or internals.{prefs_suffix}""",
+CRITICAL: When the user's message is a short reply ('Yes', 'proceed', '500 12%', 'cash') to a previous clarification,
+ALWAYS include the full context in the task. For example:
+  User originally: 'Add 5 packets aashirwad atta 10kg'
+  Agent asked: 'Need MRP and GST'
+  User replies: '500, 12%'
+  → Delegate to inventory_agent: 'Add new product: name=aashirwad atta 10kg, unit=packet, quantity=5, mrp=500, gst=12%'
+
+Never delegate a bare 'Yes' or short number without context. Be concise in all other replies.{prefs_suffix}""",
             subagents=[inventory_agent, billing_agent, khata_agent, preferences_agent],
             permissions=DENY_FILESYSTEM,
             checkpointer=self.memory,
@@ -200,8 +217,9 @@ Delegate immediately. Be concise. Never mention tool names or internals.{prefs_s
             financial_keys = {"cost_price", "mrp", "gst_slab_percent", "amount"}
             args_with_numbers = {k: v for k, v in kwargs.items() if k in financial_keys and v is not None}
             if args_with_numbers:
-                # Check if user mentioned these numbers
-                config = {"configurable": {"thread_id": str(self.chat_id)}}
+                # Use the correct thread_id (must match handle_message)
+                thread_id = f"{self.chat_id}_v{_THREAD_COUNTERS.get(self.chat_id, 0)}"
+                config = {"configurable": {"thread_id": thread_id}}
                 try:
                     state = self.memory.get_tuple(config)
                     if state and hasattr(state, "values") and isinstance(state.values, dict):
