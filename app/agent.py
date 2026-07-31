@@ -152,9 +152,7 @@ class StoreAgentOrchestrator:
             temperature=0,
             callbacks=[AgentCallback()],
             http_client=http_client,         # reuse existing httpx client
-            model_kwargs={
-                "extra_body": {"thinking": {"type": "disabled"}}  # for thinking models
-            },
+            extra_body={"thinking": {"type": "disabled"}},  # passed directly, not via model_kwargs
         )
 
         from sqlmodel import Session as Sess2
