@@ -150,7 +150,7 @@ class StoreAgentOrchestrator:
         inventory_agent = {
             "name": "inventory_agent",
             "description": "Manage stock, add/update products, receive shipments, check inventory levels.",
-            "system_prompt": "To create a new product → use add_product (needs unit, mrp, cost, gst). To add stock to an EXISTING product → use receive_stock. To change price/GST → use update_product. To check → query_stock or list_products. When adding a product, you NEED unit and mrp — ASK if missing. Apply preferences when present." + prefs_suffix,
+            "system_prompt": "Products are identified by EXACT name (e.g. 'Aashirvaad Atta 5kg' and 'Aashirvaad Atta 10kg' are different products). To create a NEW product → add_product. To restock an EXISTING product → receive_stock. To change price/GST → update_product. To check → query_stock or list_products. When adding, you NEED unit and mrp — ASK if missing." + prefs_suffix,
             "tools": inventory_tools,
         }
 
