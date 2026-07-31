@@ -173,8 +173,7 @@ class BillingService:
         bill.total_sgst = total_sgst
         bill.payment_mode = payment_mode
         bill.status = "finalized"
-        # Store customer name on the bill for cash/UPI/card as a reference
-        if khata_customer_name and payment_mode != "khata":
+        if khata_customer_name:
             bill.customer_name = khata_customer_name
         self.session.add(bill)
 
