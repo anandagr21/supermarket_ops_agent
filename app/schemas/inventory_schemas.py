@@ -20,3 +20,9 @@ class QueryStockInput(BaseModel):
 
 class ListProductsInput(BaseModel):
     pass
+
+class UpdateProductInput(BaseModel):
+    name: str = Field(description="Product name to update.")
+    cost_price: Optional[float] = Field(default=None, gt=0, description="New cost price.")
+    mrp: Optional[float] = Field(default=None, gt=0, description="New MRP.")
+    gst_slab_percent: Optional[float] = Field(default=None, description="New GST percentage.")

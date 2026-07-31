@@ -8,7 +8,7 @@ from sqlmodel import Session
 from app.database import engine
 
 import app.tools.inventory as inv
-from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput, ListProductsInput
+from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput, ListProductsInput, UpdateProductInput
 
 import app.tools.billing as bill
 from app.schemas.billing_schemas import (
@@ -90,6 +90,7 @@ class StoreAgentOrchestrator:
 
         inventory_tools = [
             self._wrap(inv.add_product, AddProductInput),
+            self._wrap(inv.update_product, UpdateProductInput),
             self._wrap(inv.receive_stock, ReceiveStockInput),
             self._wrap(inv.query_stock, QueryStockInput),
             self._wrap(inv.list_products, ListProductsInput),
@@ -148,8 +149,8 @@ class StoreAgentOrchestrator:
 
         inventory_agent = {
             "name": "inventory_agent",
-            "description": "Manage stock, add products, receive shipments, check inventory levels.",
-            "system_prompt": "Add products, receive shipments, check stock, list inventory. When adding a product, you NEED unit, cost_price, mrp, and gst_slab_percent. If ANY of these are missing, ASK the user rather than guessing. Once you have all fields, call add_product ONCE. Apply preferences when present." + prefs_suffix,
+            "description": "Manage stock, add/update products, receive shipments, check inventory levels.",
+            "system_prompt": "Add/update products, receive shipments, check stock, list inventory. To change price/GST without affecting stock → use update_product (NOT receive_stock). When adding a product, you NEED unit, cost_price, mrp, and gst_slab_percent — ASK if missing. Apply preferences when present." + prefs_suffix,
             "tools": inventory_tools,
         }
 

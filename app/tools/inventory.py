@@ -1,5 +1,5 @@
 from sqlmodel import Session
-from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput, ListProductsInput
+from app.schemas.inventory_schemas import AddProductInput, ReceiveStockInput, QueryStockInput, ListProductsInput, UpdateProductInput
 from app.repositories.product_repository import ProductRepository
 from app.services.inventory_service import InventoryService
 from app.logger import setup_logger
@@ -38,6 +38,14 @@ def query_stock(session: Session, chat_id: int, args: QueryStockInput) -> str:
     service = get_inventory_service(session)
     result = service.query_stock(chat_id, args.name)
     log.info(f"chat_id={chat_id} | query_stock → {result[:120]}")
+    return result
+
+def update_product(session: Session, chat_id: int, args: UpdateProductInput) -> str:
+    """Update product price, cost, or GST WITHOUT changing stock quantity."""
+    log.info(f"chat_id={chat_id} | update_product({args.name}, cost={args.cost_price}, mrp={args.mrp}, gst={args.gst_slab_percent})")
+    service = get_inventory_service(session)
+    result = service.update_product(chat_id, args.name, args.cost_price, args.mrp, args.gst_slab_percent)
+    log.info(f"chat_id={chat_id} | update_product → {result}")
     return result
 
 def list_products(session: Session, chat_id: int, args: ListProductsInput) -> str:
